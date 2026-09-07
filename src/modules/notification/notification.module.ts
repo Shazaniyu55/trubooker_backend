@@ -52,6 +52,6 @@ import { CloudinaryModule } from '@modules/cloudinary/cloudinary.module';
     MarkOneNotificationUseCase,
     DeleteOneNotificationUseCase
   ],
-  exports: [NotificationService, NotificationGateway],
+  exports: [NotificationService, NotificationGateway, ExpoService],
 })
 export class NotificationModule {}

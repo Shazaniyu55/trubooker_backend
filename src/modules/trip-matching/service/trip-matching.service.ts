@@ -28,6 +28,8 @@ import {
   resolveNigeriaState,
 } from '@shared/utils/geo/nigeria-geo.util';
 import { BoardQueryDto, ClaimPoolDto } from '../dtos/trip-matching.dto';
+import { ExpoService } from '@modules/notification/services/expo.service';
+import { User } from '@modules/core/entities/user.entity';
 
 /** Lead times (hours) for pushing a pooled request to the driver board. */
 const INTRA_STATE_WINDOW_HOURS = 12; // within a state
@@ -41,6 +43,7 @@ export class TripMatchingService {
   constructor(
     private readonly entityManager: EntityManager,
     private readonly notificationService: NotificationService,
+    private readonly expoService: ExpoService,
     @InjectRepository(TripRequestPool)
     private readonly poolRepo: Repository<TripRequestPool>,
     @InjectRepository(TripRequest)
@@ -49,6 +52,8 @@ export class TripMatchingService {
     private readonly driverRepo: Repository<Driver>,
     @InjectRepository(Trip)
     private readonly tripRepo: Repository<Trip>,
+      @InjectRepository(User) private readonly userRepo: Repository<User>,
+
   ) {}
 
   // ════════════════════════════════════════════════════════════════════════
@@ -299,6 +304,11 @@ export class TripMatchingService {
           isInterState: pool.isInterState,
         },
       });
+         // Direct Expo push, per driver
+    for (const userId of userIds) {
+      await this.pushToUser(userId, 'New trip request on the board', `${pool.totalSeats} passenger(s) want ${pool.origin} → ${pool.destination} ` +
+          `on ${pool.requestedDate}. Tap to claim.`);
+    }
     } catch (err) {
       this.logger.warn(`Failed to notify drivers for pool ${pool.id}: ${err?.message}`);
     }
@@ -461,12 +471,26 @@ export class TripMatchingService {
           requestedDate: pool.requestedDate,
         },
       });
+      await this.pushToUser(req.requesterUserId, 'Trip Request Claimed', `Your trip request for ${pool.origin} → ${pool.destination} has been claimed by a driver.`);
     } catch (err) {
       this.logger.warn(`Failed to notify passenger ${req.requesterUserId}: ${err?.message}`);
     }
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
+  /** Fetch the user's Expo token and push directly. Best-effort. */
+private async pushToUser(userId: string, title: string, body: string, data?: any) {
+  try {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user?.expoToken) {
+      this.logger.warn(`No expoToken for user ${userId}; skipping push`);
+      return;
+    }
+    await this.expoService.sendPushNotification(user.expoToken, title, body, data);
+  } catch (err) {
+    this.logger.warn(`Expo push failed for ${userId}: ${err?.message}`);
+  }
+}
 
  /**
  * Called when a driver creates a trip. Finds every PENDING request on the
@@ -556,6 +580,7 @@ async fulfillRequestsForTrip(
         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
       );
     }
+        await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
   }
 
   this.logger.log(

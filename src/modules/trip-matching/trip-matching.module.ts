@@ -16,12 +16,13 @@ import { TripMatchingController } from './controller/trip-matching.controller';
 import { GetDriverBoardUsecase } from './usecases/getdriverboard.usecase';
 import { ClaimPoolUsecase } from './usecases/claimpool.usecase';
 import { RunMatchingUsecase } from './usecases/runmatching.usecase';
+import { User } from '@modules/core/entities/user.entity';
 
 @Module({
   imports: [
     ConfigModule,
     // NotificationService comes from the @Global() NotificationModule.
-    TypeOrmModule.forFeature([TripRequest, TripRequestPool, Driver, Trip]),
+    TypeOrmModule.forFeature([TripRequest, TripRequestPool, Driver, Trip, User]),
   ],
   controllers: [TripMatchingController],
   providers: [
