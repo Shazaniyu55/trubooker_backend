@@ -232,6 +232,7 @@ export enum PreferredTime {
   MORNING = 'morning',
   AFTERNOON = 'afternoon',
   EVENING = 'evening',
+  EARLY_AFTERNOON = 'EARLY_AFTERNOON',
 }
 
 
@@ -245,6 +246,7 @@ export const PREFERRED_TIME_SLOT_TO_TIME: Record<PreferredTime, string> = {
   [PreferredTime.MORNING]: '07:00:00',
   [PreferredTime.AFTERNOON]: '12:00:00',
   [PreferredTime.EVENING]: '17:00:00',
+  [PreferredTime.EARLY_AFTERNOON]: '13:00:00',
 };
 
 /**
@@ -255,6 +257,7 @@ export const PREFERRED_TIME_SLOT_TO_RANGE: Record<PreferredTime, string> = {
   [PreferredTime.MORNING]: '7:00 AM - 9:00 AM',
   [PreferredTime.AFTERNOON]: '12:00 PM - 2:00 PM',
   [PreferredTime.EVENING]: '5:00 PM - 7:00 PM',
+  [PreferredTime.EARLY_AFTERNOON]: '1:00 PM - 3:00 PM',
 };
 
 /** Accepted values for the `preferredTime` field on a create request. */
