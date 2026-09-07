@@ -468,12 +468,12 @@ export class TripMatchingService {
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
-  /**
+ /**
  * Called when a driver creates a trip. Finds every PENDING request on the
  * same route + date, approves it, links it to the new trip, closes its pool,
  * and notifies the passenger — no admin. Best-effort, runs in the caller's
- * transaction, and only touches PENDING requests so nobody is approved or
- * notified twice.
+ * transaction/manager, and only touches PENDING requests so nobody is
+ * approved or notified twice.
  */
 async fulfillRequestsForTrip(
   args: { tripId: string; origin: string; destination: string; date: string },
@@ -482,18 +482,37 @@ async fulfillRequestsForTrip(
   const { tripId, origin, destination, date } = args;
   if (!origin || !destination || !date) return 0;
 
-  const key = this.matchKey(origin, destination, date);
+  // Both sides must be ISO before comparison. Requests are normalised on
+  // create; trips are not, so coerce here.
+  const iso = (d: string) => {
+    const t = String(d ?? '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+    const m = t.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : t;
+  };
 
-  // Only requests still waiting, on the same date.
+  const tripDate = iso(date);
+  const key = this.matchKey(origin, destination, tripDate);
+  this.logger.debug(`fulfillRequestsForTrip: trip ${tripId} key=${key}`);
+
+  // All requests still waiting. We compare keys in memory so date-format
+  // differences never hide a match at the SQL layer.
   const pending = await em.find(TripRequest, {
-    where: { status: TripRequestStatus.PENDING, requestedDate: date },
+    where: { status: TripRequestStatus.PENDING },
   });
 
-  // Same coarse route token the pool uses, so "Lagos (CMS)" matches "Lagos".
   const matches = pending.filter(
-    (r) => this.matchKey(r.origin, r.destination, r.requestedDate) === key,
+    (r) =>
+      this.matchKey(r.origin, r.destination, iso(r.requestedDate)) === key,
   );
-  if (!matches.length) return 0;
+
+  if (!matches.length) {
+    this.logger.debug(
+      `fulfillRequestsForTrip: no PENDING request matched key=${key} ` +
+        `(scanned ${pending.length})`,
+    );
+    return 0;
+  }
 
   for (const req of matches) {
     req.status = TripRequestStatus.APPROVED;
@@ -506,12 +525,16 @@ async fulfillRequestsForTrip(
       await em.update(
         TripRequestPool,
         { id: req.poolId },
-        { status: TripPoolStatus.CLAIMED, linkedTripId: tripId, claimedAt: new Date() },
+        {
+          status: TripPoolStatus.CLAIMED,
+          linkedTripId: tripId,
+          claimedAt: new Date(),
+        },
       );
     }
 
-    // Notify the passenger (per-passenger best-effort — one failure
-    // must not stop the others).
+    // Notify the passenger (per-passenger best-effort — one failure must
+    // not stop the others).
     try {
       await this.notificationService.notify({
         userId: req.requesterUserId,
@@ -535,7 +558,9 @@ async fulfillRequestsForTrip(
     }
   }
 
-  this.logger.log(`Trip ${tripId} auto-approved ${matches.length} request(s).`);
+  this.logger.log(
+    `Trip ${tripId} auto-approved ${matches.length} request(s).`,
+  );
   return matches.length;
 }
 

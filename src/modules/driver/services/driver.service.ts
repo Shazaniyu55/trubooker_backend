@@ -16,6 +16,7 @@ import { VehicleType } from '@modules/core/entities/vehicletype.entity';
 import { RedisCacheService } from '@modules/cache/redis-cache.service';
 import { CACHE_KEYS, CACHE_TTL } from '@modules/cache/redis-cache.constants';
 import { ExpoService } from '@modules/notification/services/expo.service';
+import { TripMatchingService } from '@modules/trip-matching/service/trip-matching.service';
  
 const PLATFORM_FEE_RATE = parseFloat(process.env.PLATFORM_FEE_RATE ?? '7'); // 5%
  
@@ -46,8 +47,8 @@ export class DriverTripService {
     private readonly notifiyService:NotificationService,
     private readonly driverRepository: DriverRepository,
     private readonly cache: RedisCacheService,
-    private readonly expoService: ExpoService
-    
+    private readonly expoService: ExpoService,
+    private readonly matching: TripMatchingService,     
     
     
  
@@ -106,20 +107,7 @@ if (dto.totalSeats > vehicle.capacity) {
 }
  
  
-// const vehicle = await this.vehicleRepo.findOne({
-//   where: { driverId: driver.id  },
-// });
-// if (!vehicle) {
-//   throw new BadRequestException(
-//     'Please register a vehicle before creating a trip',
-//   );
-// }
- 
-// if (!vehicle.isVerified) {
-//   throw new BadRequestException(
-//     'Your vehicle is pending verification. You can create trips once it is approved.',
-//   );
-// }
+
  
     // Validate trip data
     this.validateTripData(dto);
@@ -178,8 +166,28 @@ await this.notifiyService.notify({
   },
 });
 //send push
-     
+
+try {
+          await this.matching.fulfillRequestsForTrip(
+            {
+              tripId: savedTrip.id,
+              origin: dto.departureLocation,
+              destination:
+                dto.arrivalDestination?.[0]?.name ?? dto.dropOffStation,
+              date: dto.departureDate,
+            },
+            manager,
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Auto-approve on trip create failed: ${err?.message}`,
+          );
+        }
+
         return savedTrip;
+  }
+     
+        //return savedTrip;
  
   }
  
