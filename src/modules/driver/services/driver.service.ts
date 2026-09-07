@@ -189,7 +189,7 @@ try {
      
         //return savedTrip;
  
-  }
+  
  
    async updateProfile(
       id: string,
