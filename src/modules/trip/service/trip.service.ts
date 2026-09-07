@@ -2,6 +2,7 @@ import {
 
   BadRequestException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import {  EntityManager } from 'typeorm';
 import * as QRCode from 'qrcode';
@@ -24,16 +25,19 @@ import {
   UpdateTripDto,
 } from '../dtos/trip.dto';
 import { TripRepository } from '@adapters/repositories/trip.repository';
+import { TripMatchingService } from '@modules/trip-matching/service/trip-matching.service';
 // import { TicketStatus } from 'src/types/enums';
 
 
 
 @Injectable()
 export class TripsService {
-
+private readonly logger = new Logger(TripsService.name);
   constructor(
     private readonly tripRepository: TripRepository,
     private readonly fareService: FareService,
+      private readonly matching: TripMatchingService,
+
   ) {}
 
   // ─── Driver: Create trip ──────────────────────────────────────────────────
@@ -61,13 +65,32 @@ async createTrip(
     },
   };
 
-  const trip = await this.tripRepository.createTrip(
-    id,
-    dtoWithPriceMeta,
-    entityManager,
-  );
+  const trip = await this.tripRepository.createTrip(id, dtoWithPriceMeta, entityManager);
 
-  return trip;
+if (entityManager) {
+  try {
+    await this.matching.fulfillRequestsForTrip(
+      {
+        tripId: trip.id,
+        origin: dto.origin,
+        destination: dto.destination,
+        date: dto.departureDate,
+      },
+      entityManager,
+    );
+  } catch (err) {
+    this.logger.warn?.(`Auto-approve on trip create failed: ${err?.message}`);
+  }
+}
+
+return trip;
+  // const trip = await this.tripRepository.createTrip(
+  //   id,
+  //   dtoWithPriceMeta,
+  //   entityManager,
+  // );
+
+  // return trip;
 }
   // ─── Driver: Activate/publish trip ───────────────────────────────────────
 

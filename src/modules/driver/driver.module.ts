@@ -55,6 +55,7 @@ import { GetVehicleTypeUsecase } from './usecases/getvehicletype.usecase';
 import { GetDriverTripStatusUsecase } from './usecases/getdrivertripstatus.usecase';
 import { GetDriverDashboardUsecase } from './usecases/getdriverdashboard.usecase';
 import { GetDriverProfileUsecase } from './usecases/getdriverprofile.usecase';
+import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -73,6 +74,7 @@ import { GetDriverProfileUsecase } from './usecases/getdriverprofile.usecase';
     ConfigModule,
     TripsModule,
     NotificationModule,
+    TripMatchingModule,
     TypeOrmModule.forFeature([
       Trip,
       Driver,
@@ -95,7 +97,7 @@ import { GetDriverProfileUsecase } from './usecases/getdriverprofile.usecase';
     DriverRepository,
     // Services
     DriverTripService,
-    TripsService,
+    //TripsService,
     PayoutService,
     // Use Cases
     CreateDriverTripUsecase,
@@ -126,6 +128,6 @@ import { GetDriverProfileUsecase } from './usecases/getdriverprofile.usecase';
 
 
   ],
-  exports: [DriverTripService, TripsService, PayoutService],
+  exports: [DriverTripService, TripsModule, PayoutService],
 })
 export class DriverModule {}

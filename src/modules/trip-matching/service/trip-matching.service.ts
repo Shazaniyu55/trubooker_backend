@@ -468,6 +468,77 @@ export class TripMatchingService {
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
+  /**
+ * Called when a driver creates a trip. Finds every PENDING request on the
+ * same route + date, approves it, links it to the new trip, closes its pool,
+ * and notifies the passenger — no admin. Best-effort, runs in the caller's
+ * transaction, and only touches PENDING requests so nobody is approved or
+ * notified twice.
+ */
+async fulfillRequestsForTrip(
+  args: { tripId: string; origin: string; destination: string; date: string },
+  em: EntityManager,
+): Promise<number> {
+  const { tripId, origin, destination, date } = args;
+  if (!origin || !destination || !date) return 0;
+
+  const key = this.matchKey(origin, destination, date);
+
+  // Only requests still waiting, on the same date.
+  const pending = await em.find(TripRequest, {
+    where: { status: TripRequestStatus.PENDING, requestedDate: date },
+  });
+
+  // Same coarse route token the pool uses, so "Lagos (CMS)" matches "Lagos".
+  const matches = pending.filter(
+    (r) => this.matchKey(r.origin, r.destination, r.requestedDate) === key,
+  );
+  if (!matches.length) return 0;
+
+  for (const req of matches) {
+    req.status = TripRequestStatus.APPROVED;
+    req.linkedTripId = tripId;
+    req.processedAt = new Date();
+    await em.save(TripRequest, req);
+
+    // Close the pool this request was sitting in, if any.
+    if (req.poolId) {
+      await em.update(
+        TripRequestPool,
+        { id: req.poolId },
+        { status: TripPoolStatus.CLAIMED, linkedTripId: tripId, claimedAt: new Date() },
+      );
+    }
+
+    // Notify the passenger (per-passenger best-effort — one failure
+    // must not stop the others).
+    try {
+      await this.notificationService.notify({
+        userId: req.requesterUserId,
+        title: 'Your trip request was approved',
+        body:
+          `A driver created a trip for ${req.origin} → ${req.destination} ` +
+          `on ${req.requestedDate}. Tap to book your seat.`,
+        type: NotificationType.TRIP_REQUEST_APPROVED,
+        data: {
+          tripRequestId: req.id,
+          tripId,
+          origin: req.origin,
+          destination: req.destination,
+          requestedDate: req.requestedDate,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
+      );
+    }
+  }
+
+  this.logger.log(`Trip ${tripId} auto-approved ${matches.length} request(s).`);
+  return matches.length;
+}
+
   /** `origin|destination|date`, each side normalised to a stable token. */
   private matchKey(origin: string, destination: string, date: string): string {
     return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;

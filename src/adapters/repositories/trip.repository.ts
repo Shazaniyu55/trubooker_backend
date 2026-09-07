@@ -119,6 +119,8 @@ async createTrip(
 
         const trip = manager.create(Trip, {
           ...dto,
+          departureDate: dto.departureDate, 
+          departureLocation: dto.origin, 
           vehicleId: vehicle.id, // always set explicitly — dto.vehicleId may have been omitted
           reference,
           driverId: driver.id,

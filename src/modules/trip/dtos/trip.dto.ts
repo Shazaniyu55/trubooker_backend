@@ -70,6 +70,9 @@ export class CreateTripDto {
   @Matches(/^\d{2}:\d{2}(:\d{2})?$/, { message: 'bookingClosingTime must be in HH:mm or HH:mm:ss format' })
   @IsOptional()
   bookingClosingTime?: string;
+
+  @ApiProperty({ example: '2025-08-25', description: 'Departure date (YYYY-MM-DD)' })
+@IsNotEmpty() @IsString() departureDate: string;
 }
 
 // ─── Update trip ───────────────────────────────────────────────────────────
