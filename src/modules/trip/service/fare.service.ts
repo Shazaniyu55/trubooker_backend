@@ -30,11 +30,30 @@ export interface RouteEstimate {
   distanceKm: number | null; // null when geocoding was unavailable
 }
 
+// export interface PriceRecommendation extends RouteEstimate {
+//   currency: 'NGN';
+//   perKmRate: number;
+//   recommendedPricePerSeat: number | null; // null when distance unavailable
+//   basis: 'distance' | 'unavailable';
+// }
+
 export interface PriceRecommendation extends RouteEstimate {
   currency: 'NGN';
   perKmRate: number;
   recommendedPricePerSeat: number | null; // null when distance unavailable
   basis: 'distance' | 'unavailable';
+  /** Seat count the maximum total is based on (the vehicle's capacity). */
+  maxSeats: number;
+  /** Total for a single seat — the LOWEST the trip can cost. */
+  minTotal: number | null;
+  /** Total with every seat filled — the HIGHEST the trip can cost. */
+  maxTotal: number | null;
+  /**
+   * What the driver app labels "total trip cost": the MAXIMUM (all seats).
+   * Alias of maxTotal so the app can bind to one unambiguous field and never
+   * show the single-seat minimum by mistake.
+   */
+  totalTripCost: number | null;
 }
 
 export interface PassengerFareEstimate {
@@ -90,7 +109,11 @@ export class FareService {
 
   // ── The recommendation: distance × rate per km ────────────────────────────
 
-  async recommendPrice(origin: string, destination: string): Promise<PriceRecommendation> {
+   async recommendPrice(
+    origin: string,
+    destination: string,
+    maxSeats = 4,
+  ): Promise<PriceRecommendation> {
     const perKmRate = await this.perKmRate();
     const route = await this.estimateRoute(origin, destination);
 
@@ -103,40 +126,62 @@ export class FareService {
       basis = 'distance';
     }
 
+    // Total trip cost = price per seat × seats. The MAX (every seat filled) is
+    // what the driver's "total trip cost" should display; the MIN is a single
+    // seat. Pass the real vehicle capacity as `maxSeats` for the true maximum.
+    const cap = clamp(Math.floor(maxSeats), 1, 50);
+    const minTotal =
+      recommendedPricePerSeat == null ? null : recommendedPricePerSeat;
+    const maxTotal =
+      recommendedPricePerSeat == null ? null : recommendedPricePerSeat * cap;
+
     return {
       ...route,
       currency: 'NGN',
       perKmRate,
       recommendedPricePerSeat,
       basis,
+      maxSeats: cap,
+      minTotal,
+      maxTotal,
+      totalTripCost: maxTotal,
     };
   }
 
   // ── Passenger-facing estimate for 1–N seats ───────────────────────────────
 
-//   async estimateForPassengers(
-//     origin: string,
-//     destination: string,
-//     maxSeats = 4,
-//   ): Promise<{
-//     recommendation: PriceRecommendation;
-//     perSeat: number | null;
-//     seats: PassengerFareEstimate[];
-//   }> {
-//     const recommendation = await this.recommendPrice(origin, destination);
-//     const perSeat = recommendation.recommendedPricePerSeat;
-//     const cap = clamp(Math.floor(maxSeats), 1, 10);
 
-//     const seats: PassengerFareEstimate[] =
-//       perSeat == null
-//         ? []
-//         : Array.from({ length: cap }, (_, i) => {
-//             const s = i + 1;
-//             return { seats: s, pricePerSeat: perSeat, total: perSeat * s };
-//           });
 
-//     return { recommendation, perSeat, seats };
-//   }
+// async estimateForPassengers(
+//   origin: string,
+//   destination: string,
+//   maxSeats = 4,
+// ): Promise<{
+//   recommendation: PriceRecommendation;
+//   perSeat: number | null;
+//   seats: PassengerFareEstimate[];
+//   maxSeats: number;
+//   maxTotal: number | null;
+// }> {
+//   const recommendation = await this.recommendPrice(origin, destination);
+//   const perSeat = recommendation.recommendedPricePerSeat;
+//   const cap = clamp(Math.floor(maxSeats), 1, 10);
+
+//   const seats: PassengerFareEstimate[] =
+//     perSeat == null
+//       ? []
+//       : Array.from({ length: cap }, (_, i) => {
+//           const s = i + 1;
+//           return { seats: s, pricePerSeat: perSeat, total: perSeat * s };
+//         });
+
+//   return {
+//     recommendation,
+//     perSeat,
+//     seats,
+//     maxSeats: cap,
+//     maxTotal: perSeat == null ? null : perSeat * cap,
+//   };
 // }
 
 async estimateForPassengers(
@@ -148,11 +193,13 @@ async estimateForPassengers(
   perSeat: number | null;
   seats: PassengerFareEstimate[];
   maxSeats: number;
+  minTotal: number | null;
   maxTotal: number | null;
+  totalTripCost: number | null;
 }> {
-  const recommendation = await this.recommendPrice(origin, destination);
-  const perSeat = recommendation.recommendedPricePerSeat;
   const cap = clamp(Math.floor(maxSeats), 1, 10);
+  const recommendation = await this.recommendPrice(origin, destination, cap);
+  const perSeat = recommendation.recommendedPricePerSeat;
 
   const seats: PassengerFareEstimate[] =
     perSeat == null
@@ -162,12 +209,16 @@ async estimateForPassengers(
           return { seats: s, pricePerSeat: perSeat, total: perSeat * s };
         });
 
+  const maxTotal = perSeat == null ? null : perSeat * cap;
+
   return {
     recommendation,
     perSeat,
     seats,
     maxSeats: cap,
-    maxTotal: perSeat == null ? null : perSeat * cap,
+    minTotal: perSeat == null ? null : perSeat, // single-seat (lowest) total
+    maxTotal, // all-seats (highest) total
+    totalTripCost: maxTotal, // what the app shows as "total trip cost"
   };
 }
 

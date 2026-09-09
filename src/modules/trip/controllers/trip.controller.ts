@@ -181,14 +181,28 @@ export class TripsController {
     return this.broker.runUsecases([this.estimateFareUsecase], dto);
   }
 
-  @DriverOnly()
+  // @DriverOnly()
+  // @Get('driver/price-recommendation')
+  // @ApiOperation({
+  //   summary: 'Driver: Recommended per-seat price for a route',
+  //   description:
+  //     'Returns a fair recommended fare plus the min/max band the driver may price within. ' +
+  //     'Prevents exaggerated pricing while still letting the driver set a price around the recommendation. ' +
+  //     'The same band is enforced when the trip is created.',
+  // })
+  // priceRecommendation(@Query() dto: PriceRecommendationQueryDto) {
+  //   return this.broker.runUsecases([this.recommendTripPriceUsecase], dto);
+  // }
+
+    @DriverOnly()
   @Get('driver/price-recommendation')
   @ApiOperation({
-    summary: 'Driver: Recommended per-seat price for a route',
+    summary: 'Driver: Recommended per-seat price + total trip cost for a route',
     description:
-      'Returns a fair recommended fare plus the min/max band the driver may price within. ' +
-      'Prevents exaggerated pricing while still letting the driver set a price around the recommendation. ' +
-      'The same band is enforced when the trip is created.',
+      'Returns a fair recommended per-seat price plus the total trip cost. ' +
+      '`totalTripCost` (= `maxTotal`) is the MAXIMUM — every seat filled — and is ' +
+      'what the driver app should show as the total; `minTotal` is a single seat. ' +
+      'Pass `seats` (the vehicle capacity) for the true maximum; it defaults to 4.',
   })
   priceRecommendation(@Query() dto: PriceRecommendationQueryDto) {
     return this.broker.runUsecases([this.recommendTripPriceUsecase], dto);

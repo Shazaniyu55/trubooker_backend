@@ -26,6 +26,8 @@ import {
 import {
   isInterStateTrip,
   resolveNigeriaState,
+  resolveNigeriaDistrict,
+  districtToken,
 } from '@shared/utils/geo/nigeria-geo.util';
 import { BoardQueryDto, ClaimPoolDto } from '../dtos/trip-matching.dto';
 import { ExpoService } from '@modules/notification/services/expo.service';
@@ -84,9 +86,16 @@ export class TripMatchingService {
     if (!eligible.length) return { pooled: 0, poolsTouched: 0 };
 
     // Bucket by a normalised route+date key.
-    const buckets = new Map<string, TripRequest[]>();
+    // const buckets = new Map<string, TripRequest[]>();
+    // for (const req of eligible) {
+    //   const key = this.matchKey(req.origin, req.destination, req.requestedDate);
+    //   const list = buckets.get(key) ?? [];
+    //   list.push(req);
+    //   buckets.set(key, list);
+    // }
+        const buckets = new Map<string, TripRequest[]>();
     for (const req of eligible) {
-      const key = this.matchKey(req.origin, req.destination, req.requestedDate);
+      const key = this.requestMatchKey(req);
       const list = buckets.get(key) ?? [];
       list.push(req);
       buckets.set(key, list);
@@ -136,11 +145,12 @@ export class TripMatchingService {
     const today = new Date().toISOString().slice(0, 10);
     if (req.requestedDate < today) return null;
 
-    return this.upsertPool(
-      this.matchKey(req.origin, req.destination, req.requestedDate),
-      [req],
-      em,
-    );
+    // return this.upsertPool(
+    //   this.matchKey(req.origin, req.destination, req.requestedDate),
+    //   [req],
+    //   em,
+    // );
+    return this.upsertPool(this.requestMatchKey(req), [req], em);
   }
 
   /** Create or extend the MATCHING pool for a route+date and attach members. */
@@ -182,11 +192,48 @@ export class TripMatchingService {
 
     const isNew = !pool;
 
+    // if (!pool) {
+    //   pool = em.create(TripRequestPool, {
+    //     matchKey,
+    //     origin: sample.origin,
+    //     destination: sample.destination,
+    //     originState: resolveNigeriaState(sample.origin),
+    //     destinationState: resolveNigeriaState(sample.destination),
+    //     isInterState: isInter,
+    //     requestedDate,
+    //     departureTime: earliestTime,
+    //     departureAt,
+    //     dispatchWindowHours: windowHours,
+    //     // Straight onto the driver board — no dispatch window. dispatchAt /
+    //     // dispatchedAt are stamped "now" so the board query and any downstream
+    //     // reporting stay consistent.
+    //     dispatchAt: now,
+    //     dispatchedAt: now,
+    //     status: TripPoolStatus.BOARD,
+    //     totalSeats: 0,
+    //     memberCount: 0,
+    //   });
+    //   pool = await em.save(TripRequestPool, pool);
+    // } else {
+    //   // Keep the earliest preferred time if a new member wants to leave sooner.
+    //   if (earliestTime < (pool.departureTime ?? DEFAULT_DEPARTURE_TIME)) {
+    //     pool.departureTime = earliestTime;
+    //     pool.departureAt = departureAt;
+    //   }
+    // }
+
     if (!pool) {
+      // Show the DISTRICT on the board (e.g. "Ekpoma" → "Benin City"), not the
+      // first passenger's exact address. Fall back to the raw text only when
+      // the town isn't recognised.
+      const originLabel = resolveNigeriaDistrict(sample.origin) ?? sample.origin;
+      const destinationLabel =
+        resolveNigeriaDistrict(sample.destination) ?? sample.destination;
+
       pool = em.create(TripRequestPool, {
         matchKey,
-        origin: sample.origin,
-        destination: sample.destination,
+        origin: originLabel,
+        destination: destinationLabel,
         originState: resolveNigeriaState(sample.origin),
         destinationState: resolveNigeriaState(sample.destination),
         isInterState: isInter,
@@ -194,9 +241,6 @@ export class TripMatchingService {
         departureTime: earliestTime,
         departureAt,
         dispatchWindowHours: windowHours,
-        // Straight onto the driver board — no dispatch window. dispatchAt /
-        // dispatchedAt are stamped "now" so the board query and any downstream
-        // reporting stay consistent.
         dispatchAt: now,
         dispatchedAt: now,
         status: TripPoolStatus.BOARD,
@@ -204,8 +248,8 @@ export class TripMatchingService {
         memberCount: 0,
       });
       pool = await em.save(TripRequestPool, pool);
-    } else {
-      // Keep the earliest preferred time if a new member wants to leave sooner.
+    }else{
+          //   // Keep the earliest preferred time if a new member wants to leave sooner.
       if (earliestTime < (pool.departureTime ?? DEFAULT_DEPARTURE_TIME)) {
         pool.departureTime = earliestTime;
         pool.departureAt = departureAt;
@@ -514,11 +558,107 @@ private async pushToUser(userId: string, title: string, body: string, data?: any
  * transaction/manager, and only touches PENDING requests so nobody is
  * approved or notified twice.
  */
+// async fulfillRequestsForTrip(
+//   args: { tripId: string; origin: string; destination: string; date: string },
+//   em: EntityManager,
+// ): Promise<number> {
+//   const { tripId, origin, destination, date } = args;
+//   if (!origin || !destination || !date) return 0;
+
+//   // Both sides must be ISO before comparison. Requests are normalised on
+//   // create; trips are not, so coerce here.
+//   const iso = (d: string) => {
+//     const t = String(d ?? '').trim();
+//     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+//     const m = t.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+//     return m ? `${m[3]}-${m[2]}-${m[1]}` : t;
+//   };
+
+//   const tripDate = iso(date);
+//   const key = this.matchKey(origin, destination, tripDate);
+//   this.logger.debug(`fulfillRequestsForTrip: trip ${tripId} key=${key}`);
+
+//   // All requests still waiting. We compare keys in memory so date-format
+//   // differences never hide a match at the SQL layer.
+//   const pending = await em.find(TripRequest, {
+//     where: { status: TripRequestStatus.PENDING },
+//   });
+
+//   const matches = pending.filter(
+//     (r) =>
+//       this.matchKey(r.origin, r.destination, iso(r.requestedDate)) === key,
+//   );
+
+//   if (!matches.length) {
+//     this.logger.debug(
+//       `fulfillRequestsForTrip: no PENDING request matched key=${key} ` +
+//         `(scanned ${pending.length})`,
+//     );
+//     return 0;
+//   }
+
+//   for (const req of matches) {
+//     req.status = TripRequestStatus.APPROVED;
+//     req.linkedTripId = tripId;
+//     req.processedAt = new Date();
+//     await em.save(TripRequest, req);
+
+//     // Close the pool this request was sitting in, if any.
+//     if (req.poolId) {
+//       await em.update(
+//         TripRequestPool,
+//         { id: req.poolId },
+//         {
+//           status: TripPoolStatus.CLAIMED,
+//           linkedTripId: tripId,
+//           claimedAt: new Date(),
+//         },
+//       );
+//     }
+
+//     // Notify the passenger (per-passenger best-effort — one failure must
+//     // not stop the others).
+//     try {
+//       await this.notificationService.notify({
+//         userId: req.requesterUserId,
+//         title: 'Your trip request was approved',
+//         body:
+//           `A driver created a trip for ${req.origin} → ${req.destination} ` +
+//           `on ${req.requestedDate}. Tap to book your seat.`,
+//         type: NotificationType.TRIP_REQUEST_APPROVED,
+//         data: {
+//           tripRequestId: req.id,
+//           tripId,
+//           origin: req.origin,
+//           destination: req.destination,
+//           requestedDate: req.requestedDate,
+//         },
+//       });
+//     } catch (err) {
+//       this.logger.warn(
+//         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
+//       );
+//     }
+//     await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
+//   }
+
+//   this.logger.log(
+//     `Trip ${tripId} auto-approved ${matches.length} request(s).`,
+//   );
+//   return matches.length;
+// }
+
 async fulfillRequestsForTrip(
-  args: { tripId: string; origin: string; destination: string; date: string },
+  args: {
+    tripId: string;
+    origin: string;
+    destination: string;
+    date: string;
+    departureTime?: string | null;
+  },
   em: EntityManager,
 ): Promise<number> {
-  const { tripId, origin, destination, date } = args;
+  const { tripId, origin, destination, date, departureTime } = args;
   if (!origin || !destination || !date) return 0;
 
   // Both sides must be ISO before comparison. Requests are normalised on
@@ -531,8 +671,14 @@ async fulfillRequestsForTrip(
   };
 
   const tripDate = iso(date);
-  const key = this.matchKey(origin, destination, tripDate);
-  this.logger.debug(`fulfillRequestsForTrip: trip ${tripId} key=${key}`);
+  // Match on district + date. The driver's exact "Market Road (Ekpoma)" and the
+  // passenger's "GT Bank Ekpoma" both resolve to the Ekpoma district token.
+  const routeKey = this.routeDateKey(origin, destination, tripDate);
+  // The slot the trip's departure time falls in (null when it can't be parsed).
+  const tripSlot = this.slotForClock(departureTime);
+  this.logger.debug(
+    `fulfillRequestsForTrip: trip ${tripId} routeKey=${routeKey} slot=${tripSlot ?? 'any'}`,
+  );
 
   // All requests still waiting. We compare keys in memory so date-format
   // differences never hide a match at the SQL layer.
@@ -540,15 +686,22 @@ async fulfillRequestsForTrip(
     where: { status: TripRequestStatus.PENDING },
   });
 
-  const matches = pending.filter(
-    (r) =>
-      this.matchKey(r.origin, r.destination, iso(r.requestedDate)) === key,
-  );
+  const matches = pending.filter((r) => {
+    if (this.routeDateKey(r.origin, r.destination, iso(r.requestedDate)) !== routeKey) {
+      return false;
+    }
+    // Same district + date. Now honour the time-of-day: only pull in passengers
+    // whose slot matches the trip's. If the trip time is unknown, or a passenger
+    // stated no slot, treat it as compatible rather than dropping the match.
+    if (!tripSlot) return true;
+    const reqSlot = this.requestSlot(r);
+    return reqSlot === 'any' || reqSlot === tripSlot;
+  });
 
   if (!matches.length) {
     this.logger.debug(
-      `fulfillRequestsForTrip: no PENDING request matched key=${key} ` +
-        `(scanned ${pending.length})`,
+      `fulfillRequestsForTrip: no PENDING request matched routeKey=${routeKey} ` +
+        `slot=${tripSlot ?? 'any'} (scanned ${pending.length})`,
     );
     return 0;
   }
@@ -595,7 +748,7 @@ async fulfillRequestsForTrip(
         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
       );
     }
-        await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
+    await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
   }
 
   this.logger.log(
@@ -605,19 +758,19 @@ async fulfillRequestsForTrip(
 }
 
   /** `origin|destination|date`, each side normalised to a stable token. */
-  private matchKey(origin: string, destination: string, date: string): string {
-    return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;
-  }
+  // private matchKey(origin: string, destination: string, date: string): string {
+  //   return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;
+  // }
 
   /** Normalise a free-text location to a coarse city token for grouping. */
-  private locationToken(value: string): string {
-    return String(value ?? '')
-      .split('(')[0]        // drop "(CMS)" style suffixes
-      .split(',')[0]        // keep the first comma-segment
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      .trim();
-  }
+  // private locationToken(value: string): string {
+  //   return String(value ?? '')
+  //     .split('(')[0]        // drop "(CMS)" style suffixes
+  //     .split(',')[0]        // keep the first comma-segment
+  //     .toLowerCase()
+  //     .replace(/[^a-z0-9]/g, '')
+  //     .trim();
+  // }
 
   private normalizeTime(t?: string | null): string | null {
     if (!t) return null;
@@ -658,6 +811,70 @@ async fulfillRequestsForTrip(
       totalRecords: total,
     };
     return paged;
+  }
+
+
+  // newwwwwwwwwwww
+   /**
+   * Route + date key: `originDistrict|destinationDistrict|YYYY-MM-DD`.
+   * Every address in the same town collapses to one district token, so a
+   * passenger's exact house address never affects grouping — only the district
+   * (e.g. Ekpoma → Benin City) does.
+   */
+  private routeDateKey(origin: string, destination: string, date: string): string {
+    return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;
+  }
+
+  /**
+   * Full grouping key: route + date + preferred time slot. Adding the slot
+   * means a MORNING request and an AFTERNOON request on the same route/date
+   * fall into DIFFERENT pools, while two morning requests share one. Requests
+   * with no chosen slot use the 'any' bucket.
+   */
+  private matchKey(
+    origin: string,
+    destination: string,
+    date: string,
+    slot: string,
+  ): string {
+    return `${this.routeDateKey(origin, destination, date)}|${slot}`;
+  }
+
+  /** Build the full grouping key for a passenger request. */
+  private requestMatchKey(req: TripRequest): string {
+    return this.matchKey(
+      req.origin,
+      req.destination,
+      req.requestedDate,
+      this.requestSlot(req),
+    );
+  }
+
+  /** The time-slot bucket a request belongs to ('morning'/'afternoon'/… or 'any'). */
+  private requestSlot(req: TripRequest): string {
+    const slot = req.metadata?.preferredSlot as PreferredTime | undefined;
+    return slot ?? 'any';
+  }
+
+  /**
+   * Map a concrete clock time (a driver's trip departure time) to a slot bucket,
+   * so a created trip only auto-matches passengers who asked for that part of
+   * the day. Returns null when the time can't be parsed — callers then match
+   * every slot on the route/date rather than dropping anyone.
+   */
+  private slotForClock(time?: string | null): string | null {
+    const hhmm = this.normalizeTime(time);
+    if (!hhmm) return null;
+    const hour = Number(hhmm.slice(0, 2));
+    if (hour >= 5 && hour < 12) return PreferredTime.MORNING;
+    if (hour >= 12 && hour < 17) return PreferredTime.AFTERNOON;
+    if (hour >= 17 && hour < 21) return PreferredTime.EVENING;
+    return null;
+  }
+
+  /** Normalise a free-text location to its district token for grouping. */
+  private locationToken(value: string): string {
+    return districtToken(value);
   }
 }
 // import {

@@ -16,6 +16,10 @@ export class RecommendTripPriceUsecase extends Usecase {
   }
 
   async execute(_em: EntityManager, args: PriceRecommendationQueryDto) {
-    return this.fareService.recommendPrice(args.origin, args.destination);
+    return this.fareService.recommendPrice(
+      args.origin,
+      args.destination,
+      args.seats ?? 4,
+    );
   }
 }

@@ -160,12 +160,28 @@ export class SearchTripsDto {
 
 // ─── Fare recommendation / estimate ────────────────────────────────────────
 
+// export class PriceRecommendationQueryDto {
+//   @ApiProperty({ example: 'Lagos (CMS)' })
+//   @IsNotEmpty() @IsString() origin: string;
+
+//   @ApiProperty({ example: 'Abuja (Wuse)' })
+//   @IsNotEmpty() @IsString() destination: string;
+// }
+
 export class PriceRecommendationQueryDto {
   @ApiProperty({ example: 'Lagos (CMS)' })
   @IsNotEmpty() @IsString() origin: string;
 
   @ApiProperty({ example: 'Abuja (Wuse)' })
   @IsNotEmpty() @IsString() destination: string;
+
+  @ApiPropertyOptional({
+    example: 4,
+    description:
+      "The vehicle's seat capacity. The maximum total trip cost is " +
+      'price-per-seat × this value. Defaults to 4 when omitted.',
+  })
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) seats?: number;
 }
 
 export class FareEstimateQueryDto {

@@ -91,6 +91,57 @@ const CITY_STATE_HINTS: Record<string, NigeriaState> = {
   katsina: 'Katsina',
 };
 
+
+/**
+ * Town / district gazetteer. Maps a substring anyone might type inside a free-
+ * text address (a town name, an estate, a landmark, a park, a bank branch that
+ * carries the town name) to the CANONICAL DISTRICT it belongs to.
+ *
+ * This is what lets three very different addresses in the same town —
+ *   "Emaudo Ekpoma, Edo State"
+ *   "GT Bank Ekpoma"
+ *   "Market Square, Ekpoma"
+ * all collapse to one district: "Ekpoma". Grouping (matching passengers into a
+ * single request box) and driver→passenger notification both key off this, so
+ * the passenger's house address never matters — only the district does.
+ *
+ * Keys are matched case-insensitively as substrings, longest-first, so a more
+ * specific hint ("benin city") wins over a shorter one ("benin"). Extend freely
+ * as new routes/towns come online — this is intentionally just a lookup table
+ * so it can never fail or block matching.
+ */
+const DISTRICT_HINTS: Record<string, string> = {
+  // ── Edo State ──────────────────────────────────────────────────────────
+  // Benin City and the landmarks/areas people type instead of "Benin City".
+  'benin city': 'Benin City',
+  benin: 'Benin City',
+  'ring road': 'Benin City',
+  'oba market': 'Benin City',
+  'new benin': 'Benin City',
+  uselu: 'Benin City',
+  ugbowo: 'Benin City',
+  'ramat park': 'Benin City',
+  'sapele road': 'Benin City',
+  akpakpava: 'Benin City',
+  'ugbor': 'Benin City',
+  // Ekpoma and its quarters / common landmarks.
+  ekpoma: 'Ekpoma',
+  emaudo: 'Ekpoma',
+  iruekpen: 'Ekpoma',
+  ujoelen: 'Ekpoma',
+  eguare: 'Ekpoma',
+  // Other Edo towns.
+  auchi: 'Auchi',
+  uromi: 'Uromi',
+  ubiaja: 'Ubiaja',
+  igarra: 'Igarra',
+  irrua: 'Irrua',
+  igueben: 'Igueben',
+  ehor: 'Ehor',
+  abudu: 'Abudu',
+  'sabongida ora': 'Sabongida-Ora',
+  'sabongida-ora': 'Sabongida-Ora',
+};
 /**
  * Best-effort resolution of the Nigerian state a location string refers to.
  * Returns null when nothing recognisable is found (caller decides the fallback).
@@ -149,4 +200,70 @@ export function haversineKm(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+
+/**
+ * Best-effort resolution of the town/district a free-text location refers to.
+ * Returns a canonical district label (e.g. "Ekpoma", "Benin City") or null when
+ * nothing recognisable is found. Falls back to the city hints used for state
+ * resolution so major cities (Ikeja, Lekki, Wuse…) also resolve to a district.
+ */
+export function resolveNigeriaDistrict(location?: string | null): string | null {
+  if (!location) return null;
+  const text = String(location).toLowerCase();
+
+  // 1) Known town / landmark, most specific first.
+  const districtHints = Object.keys(DISTRICT_HINTS).sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const hint of districtHints) {
+    if (text.includes(hint)) return DISTRICT_HINTS[hint];
+  }
+
+  // 2) Fall back to the city hints (they double as districts for big cities).
+  const cityHints = Object.keys(CITY_STATE_HINTS).sort(
+    (a, b) => b.length - a.length,
+  );
+  for (const hint of cityHints) {
+    if (text.includes(hint)) return titleCase(hint);
+  }
+
+  return null;
+}
+
+/** Strip a string down to a stable lowercase alphanumeric token. */
+function toToken(value: string): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+function titleCase(value: string): string {
+  return String(value ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/**
+ * The token used to GROUP locations by district. Prefers the resolved district;
+ * when the town isn't in the gazetteer it falls back to the whole string with
+ * the state name and filler words removed (so "…, Edo State" and "…, Edo" agree)
+ * rather than just the first comma-segment. Two addresses in the same known town
+ * always return the same token; unknown towns degrade gracefully.
+ */
+export function districtToken(location?: string | null): string {
+  const district = resolveNigeriaDistrict(location);
+  if (district) return toToken(district);
+
+  // Fallback: drop any state name and filler, then tokenise what's left.
+  let text = String(location ?? '').toLowerCase();
+  for (const state of NIGERIA_STATES) {
+    text = text.split(state.toLowerCase()).join(' ');
+  }
+  text = text.replace(/\bstate\b|\bnigeria\b/g, ' ');
+  return toToken(text);
 }

@@ -168,13 +168,25 @@ await this.notifiyService.notify({
 //send push
 
 try {
-          await this.matching.fulfillRequestsForTrip(
+          // await this.matching.fulfillRequestsForTrip(
+          //   {
+          //     tripId: savedTrip.id,
+          //     origin: dto.departureLocation,
+          //     destination:
+          //       dto.arrivalDestination?.[0]?.name ?? dto.dropOffStation,
+          //     date: dto.departureDate,
+          //   },
+          //   manager,
+          // );
+
+           await this.matching.fulfillRequestsForTrip(
             {
               tripId: savedTrip.id,
               origin: dto.departureLocation,
               destination:
                 dto.arrivalDestination?.[0]?.name ?? dto.dropOffStation,
               date: dto.departureDate,
+              departureTime: dto.departureTime,
             },
             manager,
           );

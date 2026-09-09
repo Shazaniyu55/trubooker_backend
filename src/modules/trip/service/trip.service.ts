@@ -69,12 +69,22 @@ async createTrip(
 
 if (entityManager) {
   try {
-    await this.matching.fulfillRequestsForTrip(
+    // await this.matching.fulfillRequestsForTrip(
+    //   {
+    //     tripId: trip.id,
+    //     origin: dto.origin,
+    //     destination: dto.destination,
+    //     date: dto.departureDate,
+    //   },
+    //   entityManager,
+    // );
+        await this.matching.fulfillRequestsForTrip(
       {
         tripId: trip.id,
         origin: dto.origin,
         destination: dto.destination,
         date: dto.departureDate,
+        departureTime: dto.departureTime,
       },
       entityManager,
     );
