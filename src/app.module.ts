@@ -41,6 +41,7 @@ import { TasksModule } from '@modules/task/task.module';
 import { GeocodingModule } from '@modules/geocoding/geocoding.module';
 import { TripRequestModule } from '@modules/trip-request/trip-request.module';
 import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module';
+import { GeoModule } from '@modules/geo/geo.module';
 
 
 
@@ -93,7 +94,8 @@ import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module'
     SystemSettingModule,
     CouponReferralModule,
     CloudinaryModule,
-    TasksModule
+    TasksModule,
+    GeoModule
    
   ],
   controllers: [],

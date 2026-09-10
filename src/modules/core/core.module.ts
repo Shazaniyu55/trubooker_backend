@@ -32,6 +32,8 @@ import { AgentReferral } from './entities/agent-referral.entity';
 import { SystemSetting } from './entities/system-setting.entity';
 import { SystemRecord } from './entities/system-record.entity';
 import { BookingIntent } from './entities/booking_intent.entity';
+import { Lga } from './entities/lga.entity';
+import { State } from './entities/state.entity';
 
 @Module({
   imports: [
@@ -66,7 +68,9 @@ import { BookingIntent } from './entities/booking_intent.entity';
       AppVersionHistory,
       AgentReferral,
       SystemSetting,
-      SystemRecord
+      SystemRecord,
+      State,
+      Lga
     ]),
   ],
   providers: [],
