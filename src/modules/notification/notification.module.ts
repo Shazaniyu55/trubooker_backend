@@ -21,6 +21,7 @@ import { DelteNotificationUseCase } from './usecases/deletenotify.usecase';
 import { MarkOneNotificationUseCase } from './usecases/markoneread.usecase';
 import { DeleteOneNotificationUseCase } from './usecases/deleteonenotify.usecase';
 import { CloudinaryModule } from '@modules/cloudinary/cloudinary.module';
+import { RegisterPushTokenUseCase } from './usecases/register-push-token.usecase';
 
 @Global()
 @Module({
@@ -46,6 +47,7 @@ import { CloudinaryModule } from '@modules/cloudinary/cloudinary.module';
     CreateNotificationUseCase,
     SendPushNotificationUseCase,
     GetUnReadNotificationUseCase,
+    RegisterPushTokenUseCase,
     GetAllNotificationUseCase,
     MarkAllNotificationUseCase,
     DelteNotificationUseCase,

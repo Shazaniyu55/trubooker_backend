@@ -13,6 +13,8 @@ import { MarkAllNotificationUseCase } from '../usecases/markallread.usecase';
 import { DelteNotificationUseCase } from '../usecases/deletenotify.usecase';
 import { MarkOneNotificationUseCase } from '../usecases/markoneread.usecase';
 import { DeleteOneNotificationUseCase } from '../usecases/deleteonenotify.usecase';
+import { RegisterPushTokenUseCase } from '../usecases/register-push-token.usecase';
+import { RegisterPushTokenDto } from '../dtos/register-push-token.dto';
 
 @ServiceName('notification')
 @ApiTags('Notifications')
@@ -27,7 +29,8 @@ export class NotificationController {
     private readonly markAllNotificationUsecase: MarkAllNotificationUseCase,
     private readonly deleteNotificationUsecase: DelteNotificationUseCase,
     private readonly markOneAsReadUsecase:MarkOneNotificationUseCase,
-    private readonly deleteOneNotifyUsecase: DeleteOneNotificationUseCase
+    private readonly deleteOneNotifyUsecase: DeleteOneNotificationUseCase,
+    private readonly registerPushTokenUsecase: RegisterPushTokenUseCase
   ) {}
 
   @UseGuards(JwtAuthGuard)
@@ -44,6 +47,17 @@ export class NotificationController {
   @ApiResponse({ status: 200, description: 'Push notification sent successfully' })
   async sendPush(@AuthUser() user: any) {
     return this.broker.runUsecases([this.sendPushNotificationUseCase], {id:user.sub});
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('push-token')
+  @ApiOperation({ summary: 'Register / refresh this device Expo push token' })
+  @ApiResponse({ status: 200, description: 'Expo push token registered' })
+  async registerPushToken(@AuthUser() user: any, @Body() dto: RegisterPushTokenDto) {
+    return this.broker.runUsecases(
+      [this.registerPushTokenUsecase],
+      { id: user.sub, expoToken: dto.expoToken },
+    );
   }
 
   @UseGuards(JwtAuthGuard)

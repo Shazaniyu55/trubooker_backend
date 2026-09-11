@@ -23,11 +23,13 @@ export class MatchingTasksService {
       const matched = await this.matching.matchPendingRequests();
       const dispatched = await this.matching.dispatchDuePools();
       const expired = await this.matching.expireStalePools();
+      const expiredRequests = await this.matching.expireStaleRequests();
 
-      if (matched.pooled || dispatched.dispatched || expired.expired) {
-        this.logger.log(
+      if (matched.pooled || dispatched.dispatched || expired.expired || expiredRequests.expired) {
+       this.logger.log(
           `Matching pipeline: pooled=${matched.pooled}, ` +
-            `dispatched=${dispatched.dispatched}, expired=${expired.expired}`,
+            `dispatched=${dispatched.dispatched}, expired=${expired.expired}, ` +
+            `expiredRequests=${expiredRequests.expired}`,
         );
       }
     } catch (err) {

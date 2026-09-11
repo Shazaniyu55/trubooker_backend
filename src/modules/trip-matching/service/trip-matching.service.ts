@@ -876,6 +876,84 @@ async fulfillRequestsForTrip(
   private locationToken(value: string): string {
     return districtToken(value);
   }
+
+
+
+    /**
+   * Expire individual trip requests whose requested date + departure time has
+   * passed while they are still active (PENDING, or APPROVED but never booked).
+   * BOOKED / FULFILLED / DECLINED / already-EXPIRED requests are left alone.
+   *
+   * When a request carries no usable time-of-day we fall back to the END of the
+   * requested day, so a same-day request without a stated time is not expired
+   * prematurely. The passenger is notified (best-effort) only when the request
+   * expired recently, so a one-off pass over a backlog of old requests never
+   * blasts historical users with push notifications.
+   */
+  async expireStaleRequests(): Promise<{ expired: number }> {
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    // Coarse DB filter: only requests on/before today still in an active state.
+    // Exact time-of-day is refined in memory below (requestedDate is a date).
+    const candidates = await this.requestRepo.find({
+      where: {
+        status: In([TripRequestStatus.PENDING, TripRequestStatus.APPROVED]),
+        requestedDate: LessThanOrEqual(today),
+      },
+    });
+    if (!candidates.length) return { expired: 0 };
+
+    const departureOf = (req: TripRequest): Date => {
+      const time = this.slotDepartureTime(req) ?? '23:59:59';
+      const at = new Date(`${req.requestedDate}T${time}`);
+      return Number.isNaN(at.getTime())
+        ? new Date(`${req.requestedDate}T23:59:59`)
+        : at;
+    };
+
+    const stale = candidates.filter((req) => {
+      const at = departureOf(req);
+      return !Number.isNaN(at.getTime()) && at <= now;
+    });
+    if (!stale.length) return { expired: 0 };
+
+    // Only notify for requests that lapsed within the last 48h — keeps a first
+    // run over historical data from spamming everyone.
+    const notifyCutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+    for (const req of stale) {
+      req.status = TripRequestStatus.EXPIRED;
+      req.processedAt = now;
+      await this.requestRepo.save(req);
+
+      if (departureOf(req) >= notifyCutoff) {
+        try {
+          await this.notificationService.notify({
+            userId: req.requesterUserId,
+            title: 'Trip request expired',
+            body:
+              `Your request for ${req.origin} → ${req.destination} on ` +
+              `${req.requestedDate} has expired because the travel date passed.`,
+            type: NotificationType.TRIP_REQUEST_EXPIRED,
+            data: {
+              tripRequestId: req.id,
+              origin: req.origin,
+              destination: req.destination,
+              requestedDate: req.requestedDate,
+            },
+          });
+        } catch (err) {
+          this.logger.warn(
+            `Failed to notify passenger ${req.requesterUserId} of expiry: ${err?.message}`,
+          );
+        }
+      }
+    }
+
+    this.logger.log(`Expired ${stale.length} stale trip request(s).`);
+    return { expired: stale.length };
+  }
 }
 // import {
 //   BadRequestException,

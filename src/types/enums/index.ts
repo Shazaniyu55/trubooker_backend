@@ -108,6 +108,7 @@ export enum NotificationType {
   TRIP_REQUEST_CREATED = 'trip_request_created',
   TRIP_REQUEST_APPROVED = 'trip_request_approved',
   TRIP_REQUEST_DECLINED = 'trip_request_declined',
+  TRIP_REQUEST_EXPIRED = 'trip_request_expired',
 
   TRIP_REQUEST_BOARD = 'trip_request_board',       // pooled request pushed to drivers
   TRIP_REQUEST_CLAIMED = 'trip_request_claimed',   // a driver claimed a pooled request
@@ -118,6 +119,8 @@ export enum TripRequestStatus {
   APPROVED = 'approved',
   DECLINED = 'declined',
   FULFILLED = 'fulfilled',
+  BOOKED = 'booked', 
+  EXPIRED = 'expired', 
 }
 
 export enum TripPoolStatus {

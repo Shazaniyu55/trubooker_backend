@@ -11,13 +11,13 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Payment } from '@modules/core/entities/payment.entity';
 import { Booking } from '@modules/core/entities/booking.entity';
 import { Passenger } from '@modules/core/entities/passenger.entity';
-
+import { TripRequest } from '@modules/core/entities/trip-request.entity';
 import { PaymentFactory } from '@adapters/payment/payment.factory';
 import { CouponService } from '@modules/coupon-referral/service/cupon.service';
 import { NotificationService } from '@modules/notification/services/notification.service';
 import { RandomnessUtil } from '@shared/utils/encryption/randomness.util';
 
-import { BookingStatus, EscrowStatus, NotificationType, PaymentStatus, TicketStatus } from 'src/types/enums';
+import { BookingStatus, EscrowStatus, NotificationType, PaymentStatus, TicketStatus, TripRequestStatus } from 'src/types/enums';
 import { InitiatePaymentDto } from '../dtos/passanger.dto';
 import { RedisCacheService } from '@modules/cache/redis-cache.service';
 import { CACHE_KEYS, CACHE_TTL } from '@modules/cache/redis-cache.constants';
@@ -258,6 +258,32 @@ async verifyPayment(
         paymentReference: reference,
       }),
     );
+
+     // ── If this booking fulfils a trip request the passenger made, move that
+    //    request from APPROVED → BOOKED so it reflects that a seat is secured.
+    //    Best-effort: a failure here must never roll back a confirmed payment. ──
+    try {
+      const passengerUserId = intent.passenger?.userId;
+      const approvedRequests = await manager.find(TripRequest, {
+        where: { linkedTripId: intent.tripId, status: TripRequestStatus.APPROVED },
+      });
+      const mine = approvedRequests.filter(
+        (req) =>
+          req.passengerId === intent.passengerId ||
+          (!!passengerUserId && req.requesterUserId === passengerUserId),
+      );
+      for (const req of mine) {
+        req.status = TripRequestStatus.BOOKED;
+        await manager.save(TripRequest, req);
+      }
+      if (mine.length) {
+        this.logger.log(
+          `Marked ${mine.length} trip request(s) as BOOKED for trip ${intent.tripId}`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to mark trip request as booked: ${err?.message}`);
+    }
 
     // notifications need the relations populated — attach from the intent
     booking.trip = intent.trip;

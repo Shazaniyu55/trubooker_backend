@@ -1,7 +1,7 @@
 // src/modules/notification/services/notification.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Not, Repository } from 'typeorm';
 import { NotificationRepository } from '@adapters/repositories/notification.repository';
 import { ExpoService } from './expo.service';
 import { NotificationGateway } from '../gateway/notification.gateway';
@@ -152,6 +152,31 @@ export class NotificationService {
   /** Fan-out to several users (e.g. all passengers on a cancelled trip). */
   async notifyMany(userIds: string[], base: Omit<NotifyParams, 'userId'>) {
     return Promise.all(userIds.map((userId) => this.notify({ ...base, userId })));
+  }
+
+    /**
+   * Register / refresh the current device's Expo push token for a user.
+   *
+   * The device app should call this whenever it obtains (or rotates) a token —
+   * crucially AFTER the OS notification-permission prompt, which usually happens
+   * after login. Without this, a token is only ever captured at login/register,
+   * so a passenger who grants permission later never receives pushes.
+   *
+   * A push token belongs to a device, not a person: if this token was attached
+   * to a different account (same phone, previous sign-in), detach it there first
+   * so the old owner stops receiving this device's notifications.
+   */
+  async registerPushToken(userId: string, expoToken: string) {
+    if (!expoToken) return { updated: false };
+
+    await this.userRepo.update(
+      { expoToken, id: Not(userId) },
+      { expoToken: null },
+    );
+    await this.userRepo.update(userId, { expoToken });
+
+    this.logger.log(`Registered Expo push token for user ${userId}`);
+    return { updated: true };
   }
 
   // ── existing read/query methods (now backed by the fixed repo) ──
