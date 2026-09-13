@@ -91,4 +91,31 @@ export class GeocodingService {
     }
     return base;
   }
+
+  async autocomplete(input: string) {
+  const q = input?.trim();
+  if (!q || q.length < 2) return [];
+
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) { this.logger.warn('GOOGLE_MAPS_API_KEY not set'); return []; }
+
+  const cacheKey = `places:autocomplete:ng:${q.toLowerCase()}`;
+  return this.cache.getOrSet(cacheKey, async () => {
+    const { data } = await axios.get(
+      'https://maps.googleapis.com/maps/api/place/autocomplete/json',
+      { params: { input: q, key: apiKey, components: 'country:ng', language: 'en' },
+        timeout: 10_000 });
+
+    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
+      this.logger.warn(`Places autocomplete "${q}": ${data.status}`);
+      return [];
+    }
+    return (data.predictions ?? []).map((p) => ({
+      placeId: p.place_id,
+      description: p.description,                                   // "Wuse 2, Abuja, Nigeria"
+      mainText: p.structured_formatting?.main_text ?? p.description, // "Wuse 2"
+      secondaryText: p.structured_formatting?.secondary_text ?? '',  // "Abuja, Nigeria"
+    }));
+  }, 60 * 60 * 24);
+}
 }

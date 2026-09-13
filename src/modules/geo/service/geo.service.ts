@@ -48,14 +48,36 @@ export class GeoService {
   }
 
   /** Search/list LGAs, optionally scoped to a state. Name searches are capped at 50 rows. */
-  listLgas(opts: { stateId?: string; q?: string } = {}) {
-    const where: Record<string, unknown> = {};
-    if (opts.stateId) where.stateId = opts.stateId;
-    if (opts.q) where.name = ILike(`%${opts.q}%`);
-    return this.lgaRepo.find({
-      where,
-      order: { name: 'ASC' },
-      take: opts.q ? 50 : undefined,
-    });
-  }
+  // listLgas(opts: { stateId?: string; q?: string } = {}) {
+  //   const where: Record<string, unknown> = {};
+  //   if (opts.stateId) where.stateId = opts.stateId;
+  //   if (opts.q) where.name = ILike(`%${opts.q}%`);
+  //   return this.lgaRepo.find({
+  //     where,
+  //     order: { name: 'ASC' },
+  //     take: opts.q ? 50 : undefined,
+  //   });
+  // }
+
+
+  // geo.service.ts
+async listLgas(opts: { stateId?: string; q?: string } = {}) {
+  const qb = this.lgaRepo
+    .createQueryBuilder('l')
+    .innerJoinAndSelect('l.state', 's')
+    .orderBy('l.name', 'ASC');
+
+  if (opts.stateId) qb.andWhere('l.stateId = :stateId', { stateId: opts.stateId });
+  if (opts.q) qb.andWhere('l.name ILIKE :q', { q: `%${opts.q}%` }).take(50);
+
+  const rows = await qb.getMany();
+  return rows.map((l) => ({
+    id: l.id,
+    name: l.name,
+    slug: l.slug,
+    stateId: l.stateId,
+    state: { id: l.state.id, name: l.state.name },
+    label: `${l.name}, ${l.state.name}`, // "Garki, Jigawa" vs "Esan West, Edo"
+  }));
+}
 }

@@ -5,12 +5,17 @@ import { SkipKillSwitch } from '@modules/kill-switch/kill-switch.guard';
 import { ServiceName } from '@shared/decorators/servicename.decorators';
 import { GeoService } from '../service/geo.service';
 import { ListLgasQueryDto, ListStatesQueryDto } from '../dto/geo-query.dto';
+import { GeocodingService } from '@modules/geocoding/geocoding.service';
 
 @ApiTags('Geo - States & LGAs')
 @ServiceName('geo')
 @Controller('v1/geo')
 export class GeoController {
-  constructor(private readonly geoService: GeoService) {}
+  constructor(
+    private readonly geoService: GeoService,
+    private readonly geocoding: GeocodingService
+
+  ) {}
 
   @Public()
   @SkipKillSwitch()
@@ -48,4 +53,13 @@ export class GeoController {
   listLgas(@Query() query: ListLgasQueryDto) {
     return this.geoService.listLgas(query);
   }
+
+  @Public()
+@SkipKillSwitch()
+@Get('places')
+@ApiOperation({ summary: 'Place autocomplete (Google, Nigeria-biased)' })
+@ApiQuery({ name: 'q', required: true })
+searchPlaces(@Query('q') q: string) {
+  return this.geocoding.autocomplete(q);
+}
 }
