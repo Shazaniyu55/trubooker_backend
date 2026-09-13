@@ -257,7 +257,7 @@ export const PREFERRED_TIME_SLOT_TO_TIME: Record<PreferredTime, string> = {
  * so the API shows e.g. "7:00 AM - 9:00 AM" instead of a raw clock value.
  */
 export const PREFERRED_TIME_SLOT_TO_RANGE: Record<PreferredTime, string> = {
-  [PreferredTime.MORNING]: '7:00 AM - 9:00 AM',
+  [PreferredTime.MORNING]: '6:00 AM - 8:00 AM',
   [PreferredTime.AFTERNOON]: '12:00 PM - 2:00 PM',
   [PreferredTime.EVENING]: '5:00 PM - 7:00 PM',
   [PreferredTime.EARLY_AFTERNOON]: '1:00 PM - 3:00 PM',
