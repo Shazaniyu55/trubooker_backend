@@ -8,7 +8,16 @@ export interface GeoPoint {
   address: string; // Google's formatted address
 }
 
+export interface DrivingDistance {
+  distanceKm: number;
+  durationMinutes: number;
+}
+
+
 const GEOCODE_URL = 'https://maps.googleapis.com/maps/api/geocode/json';
+const DISTANCE_MATRIX_URL = 'https://maps.googleapis.com/maps/api/distancematrix/json';
+
+
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days — addresses don't move
 
 @Injectable()
@@ -92,6 +101,75 @@ export class GeocodingService {
     return base;
   }
 
+
+  /**
+ * Real driving distance between two addresses via Google's Distance Matrix API.
+ * Cached for 30 days (roads don't change distance often).
+ *
+ * Returns null on any failure — caller should fall back to straight-line
+ * distance so a fare estimate is never blocked by an API hiccup.
+ */
+async getDrivingDistance(
+  origin: string,
+  destination: string,
+): Promise<DrivingDistance | null> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    this.logger.warn('GOOGLE_MAPS_API_KEY not set — skipping driving distance');
+    return null;
+  }
+
+  const originAddr = origin?.trim();
+  const destAddr = destination?.trim();
+  if (!originAddr || !destAddr) return null;
+
+  const region = process.env.GOOGLE_MAPS_REGION ?? 'ng';
+  const cacheKey = `distance:driving:${region}:${originAddr.toLowerCase()}:${destAddr.toLowerCase()}`;
+
+  try {
+    return await this.cache.getOrSet<DrivingDistance | null>(
+      cacheKey,
+      async () => {
+        const { data } = await axios.get(DISTANCE_MATRIX_URL, {
+          params: {
+            origins: originAddr,
+            destinations: destAddr,
+            region,
+            units: 'metric',
+            key: apiKey,
+          },
+          timeout: 10_000,
+        });
+
+        if (data.status !== 'OK') {
+          this.logger.warn(`Distance Matrix failed "${originAddr}"→"${destAddr}": ${data.status}`);
+          return null;
+        }
+
+        const element = data.rows?.[0]?.elements?.[0];
+        if (!element || element.status !== 'OK') {
+          this.logger.warn(
+            `Distance Matrix element failed "${originAddr}"→"${destAddr}": ${element?.status}`,
+          );
+          return null;
+        }
+
+        return {
+          distanceKm: round(element.distance.value / 1000, 1),
+          durationMinutes: Math.round(element.duration.value / 60),
+        };
+      },
+      CACHE_TTL_SECONDS,
+    );
+  } catch (err) {
+    this.logger.error(`Distance Matrix error "${originAddr}"→"${destAddr}": ${err.message}`);
+    return null;
+  }
+
+
+}
+
+
   async autocomplete(input: string) {
   const q = input?.trim();
   if (!q || q.length < 2) return [];
@@ -118,4 +196,11 @@ export class GeocodingService {
     }));
   }, 60 * 60 * 24);
 }
+
+
+}
+
+function round(v: number, dp = 0): number {
+  const f = 10 ** dp;
+  return Math.round(v * f) / f;
 }

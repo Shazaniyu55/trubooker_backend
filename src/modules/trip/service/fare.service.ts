@@ -91,24 +91,54 @@ export class FareService {
   // ── Route shape (states + distance) ───────────────────────────────────────
 
   async estimateRoute(origin: string, destination: string): Promise<RouteEstimate> {
-    const originState = resolveNigeriaState(origin);
-    const destinationState = resolveNigeriaState(destination);
-    const isInterState = isInterStateTrip(origin, destination);
+  const originState = resolveNigeriaState(origin);
+  const destinationState = resolveNigeriaState(destination);
+  const isInterState = isInterStateTrip(origin, destination);
 
-    let distanceKm: number | null = null;
-    try {
+  let distanceKm: number | null = null;
+
+  try {
+    // Prefer real driving distance
+    const driving = await this.geocoding.getDrivingDistance(origin, destination);
+    if (driving) {
+      distanceKm = driving.distanceKm;
+    } else {
+      // Fall back to straight-line distance if Distance Matrix is unavailable
       const [a, b] = await this.geocoding.geocodeMany([origin, destination]);
       if (a && b) {
         distanceKm = round(haversineKm(a.lat, a.lng, b.lat, b.lng), 1);
+        this.logger.warn(
+          `Falling back to haversine distance for "${origin}" → "${destination}"`,
+        );
       }
-    } catch (err) {
-      this.logger.warn(
-        `Route geocoding failed for "${origin}" → "${destination}": ${err?.message}`,
-      );
     }
-
-    return { originState, destinationState, isInterState, distanceKm };
+  } catch (err) {
+    this.logger.warn(
+      `Route distance lookup failed for "${origin}" → "${destination}": ${err?.message}`,
+    );
   }
+
+  return { originState, destinationState, isInterState, distanceKm };
+}
+  // async estimateRoute(origin: string, destination: string): Promise<RouteEstimate> {
+  //   const originState = resolveNigeriaState(origin);
+  //   const destinationState = resolveNigeriaState(destination);
+  //   const isInterState = isInterStateTrip(origin, destination);
+
+  //   let distanceKm: number | null = null;
+  //   try {
+  //     const [a, b] = await this.geocoding.geocodeMany([origin, destination]);
+  //     if (a && b) {
+  //       distanceKm = round(haversineKm(a.lat, a.lng, b.lat, b.lng), 1);
+  //     }
+  //   } catch (err) {
+  //     this.logger.warn(
+  //       `Route geocoding failed for "${origin}" → "${destination}": ${err?.message}`,
+  //     );
+  //   }
+
+  //   return { originState, destinationState, isInterState, distanceKm };
+  // }
 
   // ── The recommendation: distance × rate per km ────────────────────────────
 
