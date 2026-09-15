@@ -1,11 +1,12 @@
 // system-setting.service.ts
 import { SystemSetting } from '@modules/core/entities/system-setting.entity';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { PriceControlDto, ReferralProgramDto, SystemSettingEnum } from 'src/types/enums';
 import { Repository } from 'typeorm';
 import { RedisCacheService } from '@modules/cache/redis-cache.service';
 import { CACHE_TTL } from '@modules/cache/redis-cache.constants';
+import { PreferredTimeSlotDto, SetPreferredTimeSlotsDto } from '../dto/timeslot.dto';
 
 
 @Injectable()
@@ -17,6 +18,14 @@ export class SystemSettingService {
   ) {}
   private readonly PRICE_KEY = 'system:price_control';
   private readonly REFERRAL_KEY = 'system:referral_program';
+  private readonly TIME_SLOT_KEY = 'preferred_time_slots:cache';
+
+  private readonly DEFAULT_SLOTS: PreferredTimeSlotDto[] = [
+  { key: 'morning', label: 'Morning', time: '07:00:00', range: '6:00 AM - 8:00 AM', order: 0 },
+  { key: 'afternoon', label: 'Afternoon', time: '12:00:00', range: '12:00 PM - 2:00 PM', order: 1 },
+  { key: 'evening', label: 'Evening', time: '17:00:00', range: '5:00 PM - 7:00 PM', order: 2 },
+  { key: 'early_afternoon', label: 'Early Afternoon', time: '13:00:00', range: '1:00 PM - 3:00 PM', order: 3 },
+];
 
   // ─── Get All Settings ────────────────────────────────────────────────────────
 
@@ -42,6 +51,88 @@ async setPriceControl(data: PriceControlDto) {
   const saved = await this.settingRepo.save(setting);
   await this.cache.del(this.PRICE_KEY); // ← invalidate
   return saved;
+}
+
+async setPricePerKm(pricePerKm: number) {
+ const setting = await this.settingRepo.findOne({
+  where: { key: SystemSettingEnum.PRICE_CONTROL },
+ });
+ if (!setting) throw new NotFoundException('Price control setting not found');
+ setting.value = { ...setting.value, pricePerKm };
+ const saved = await this.settingRepo.save(setting);
+ await this.cache.del(this.PRICE_KEY);
+ return saved;
+}
+
+
+async getPreferredTimeSlots(): Promise<PreferredTimeSlotDto[]> {
+  const cached = await this.cache.get<PreferredTimeSlotDto[]>(this.TIME_SLOT_KEY);
+  if (cached) return cached;
+
+  const setting = await this.settingRepo.findOne({
+    where: { key: SystemSettingEnum.PREFRERRED_TIME_SLOTS },
+  });
+
+  const slots = (setting?.value?.slots as PreferredTimeSlotDto[]) ?? this.DEFAULT_SLOTS;
+  await this.cache.set(this.TIME_SLOT_KEY, slots);
+  return slots;
+}
+
+async setPreferredTimeSlots(dto: SetPreferredTimeSlotsDto) {
+  this.assertUniqueKeys(dto.slots);
+
+  let setting = await this.settingRepo.findOne({
+    where: { key: SystemSettingEnum.PREFRERRED_TIME_SLOTS },
+  });
+
+  if (!setting) {
+    setting = this.settingRepo.create({
+      key: SystemSettingEnum.PREFRERRED_TIME_SLOTS,
+      value: {},
+    });
+  }
+
+  setting.value = { ...setting.value, slots: dto.slots };
+  const saved = await this.settingRepo.save(setting);
+  await this.cache.del(this.TIME_SLOT_KEY);
+  return saved;
+}
+
+async addPreferredTimeSlot(slot: PreferredTimeSlotDto) {
+  const slots = await this.getPreferredTimeSlots();
+  if (slots.some((s) => s.key === slot.key)) {
+    throw new ConflictException(`Slot with key "${slot.key}" already exists`);
+  }
+  const updated = [...slots, slot].sort((a, b) => a.order - b.order);
+  return this.setPreferredTimeSlots({ slots: updated });
+}
+
+async updatePreferredTimeSlot(key: string, patch: Partial<Omit<PreferredTimeSlotDto, 'key'>>) {
+  const slots = await this.getPreferredTimeSlots();
+  const idx = slots.findIndex((s) => s.key === key);
+  if (idx === -1) throw new NotFoundException(`Slot "${key}" not found`);
+  const updated = [...slots];
+  updated[idx] = { ...updated[idx], ...patch };
+  return this.setPreferredTimeSlots({ slots: updated });
+}
+
+async removePreferredTimeSlot(key: string) {
+  const slots = await this.getPreferredTimeSlots();
+  const filtered = slots.filter((s) => s.key !== key);
+  if (filtered.length === slots.length) throw new NotFoundException(`Slot "${key}" not found`);
+  if (filtered.length === 0) throw new BadRequestException('At least one preferred time slot must remain');
+  return this.setPreferredTimeSlots({ slots: filtered });
+}
+
+async reorderPreferredTimeSlots(orderedKeys: string[]) {
+  const slots = await this.getPreferredTimeSlots();
+  const valid = orderedKeys.length === slots.length &&
+    orderedKeys.every((k) => slots.some((s) => s.key === k));
+  if (!valid) throw new BadRequestException('orderedKeys must match existing slot keys exactly');
+
+  const byKey = new Map(slots.map((s) => [s.key, s]));
+  const reordered = orderedKeys.map((key, order) => ({ ...byKey.get(key)!, order }));
+  return this.setPreferredTimeSlots({ slots: reordered });
 }
 
 async getPriceControl(): Promise<PriceControlDto> {
@@ -120,4 +211,13 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
       }
     }
   }
+
+
+  private assertUniqueKeys(slots: PreferredTimeSlotDto[]) {
+  const seen = new Set<string>();
+  for (const s of slots) {
+    if (seen.has(s.key)) throw new BadRequestException(`Duplicate slot key "${s.key}"`);
+    seen.add(s.key);
+  }
+}
 }

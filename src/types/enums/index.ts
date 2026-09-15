@@ -213,6 +213,7 @@ export interface ReferralProgramDto {
 export enum SystemSettingEnum {
   PRICE_CONTROL = 'price_control',
   REFERRAL_PROGRAM = 'referral_program',
+  PREFRERRED_TIME_SLOTS = 'preferred_time_slots',
 }
 
 export interface CreateContactSupportDto {
@@ -238,6 +239,13 @@ export enum PreferredTime {
   EARLY_AFTERNOON = 'EARLY_AFTERNOON',
 }
 
+export interface PreferredTimeSlot {
+  key: string;      // stable machine key, e.g. 'morning' or a slug — set once, immutable after creation
+  label: string;    // display name, e.g. 'Morning'
+  time: string;     // HH:mm:ss, used for scheduling
+  range: string;    // human-readable range shown in API responses
+  order: number;    // controls display/scheduling order
+}
 
 /**
  * Representative HH:mm:ss departure time for each preferred slot — the START of
