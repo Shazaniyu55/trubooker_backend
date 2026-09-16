@@ -55,7 +55,7 @@ import { RecommendTripPriceUsecase } from './usecases/recommendtripprice.usecase
 import { EstimateFareUsecase } from './usecases/estimatefare.usecase';
 import { SystemSettingModule } from '@modules/system/system.module';
 import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module';
-
+import { GetPricePerKmUsecase } from './usecases/getpriceperkm.usecase';
 
 
 @Module({
@@ -89,7 +89,7 @@ import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module'
     FlutterwaveProvider,
     RandomnessUtil,
     ExpoService,
-
+GetPricePerKmUsecase,
     CreateTripUsecase,
     SearchTripUsecase,
     GetCancellationReasonsUsecase,

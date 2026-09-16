@@ -120,6 +120,64 @@ export class FareService {
 
   return { originState, destinationState, isInterState, distanceKm };
 }
+
+  // ── Plain distance + price-per-km (Google Distance Matrix) ───────────────
+
+  /**
+   * Lean route pricing: just the Google-derived driving distance, the current
+   * per-km rate, and distance × rate. No seats/band logic — for callers that
+   * only want "how far, and how much per km".
+   */
+  async getPricePerKm(
+    origin: string,
+    destination: string,
+  ): Promise<{
+    origin: string;
+    destination: string;
+    distanceKm: number | null;
+    durationMinutes: number | null;
+    currency: 'NGN';
+    perKmRate: number;
+    estimatedTotal: number | null;
+  }> {
+    const perKmRate = await this.perKmRate();
+
+    let distanceKm: number | null = null;
+    let durationMinutes: number | null = null;
+    try {
+      const driving = await this.geocoding.getDrivingDistance(origin, destination);
+      if (driving) {
+        distanceKm = driving.distanceKm;
+        durationMinutes = driving.durationMinutes;
+      } else {
+        const [a, b] = await this.geocoding.geocodeMany([origin, destination]);
+        if (a && b) {
+          distanceKm = round(haversineKm(a.lat, a.lng, b.lat, b.lng), 1);
+          this.logger.warn(
+            `price-per-km: falling back to haversine for "${origin}" → "${destination}"`,
+          );
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `price-per-km: distance lookup failed for "${origin}" → "${destination}": ${err?.message}`,
+      );
+    }
+
+    const estimatedTotal =
+      distanceKm != null ? roundToNearest(distanceKm * perKmRate, 100) : null;
+
+    return {
+      origin,
+      destination,
+      distanceKm,
+      durationMinutes,
+      currency: 'NGN',
+      perKmRate,
+      estimatedTotal,
+    };
+  }
+
   // async estimateRoute(origin: string, destination: string): Promise<RouteEstimate> {
   //   const originState = resolveNigeriaState(origin);
   //   const destinationState = resolveNigeriaState(destination);
@@ -283,6 +341,9 @@ function roundToNearest(v: number, step: number): number {
   return Math.max(step, Math.round(v / step) * step);
 }
 
+
+
+
 // import { Injectable, Logger } from '@nestjs/common';
 // import { InjectRepository } from '@nestjs/typeorm';
 // import { Repository } from 'typeorm';
@@ -298,11 +359,14 @@ function roundToNearest(v: number, step: number): number {
 // } from '@shared/utils/geo/nigeria-geo.util';
 
 // /**
-//  * Fare model — deliberately simple:
+//  * Fare model — deliberately simple (ride-sharing / cost-split):
 //  *
-//  *     estimated price = distance (km) × rate per km
+//  *     total trip cost   = distance (km) × rate per km
+//  *     price per seat    = total trip cost ÷ seats
 //  *
-//  * The rate per km is set by the admin (price control → perKmRate). When the
+//  * The total is the cost of running the whole trip; passengers SPLIT it, so the
+//  * more people share, the less each pays. The rate per km is set by the admin
+//  * (price control → perKmRate). When the
 //  * admin hasn't set one yet we fall back to DEFAULT_PER_KM_RATE. If we can't
 //  * work out the distance (geocoding unavailable), there is no estimate.
 //  */
@@ -373,24 +437,54 @@ function roundToNearest(v: number, step: number): number {
 //   // ── Route shape (states + distance) ───────────────────────────────────────
 
 //   async estimateRoute(origin: string, destination: string): Promise<RouteEstimate> {
-//     const originState = resolveNigeriaState(origin);
-//     const destinationState = resolveNigeriaState(destination);
-//     const isInterState = isInterStateTrip(origin, destination);
+//   const originState = resolveNigeriaState(origin);
+//   const destinationState = resolveNigeriaState(destination);
+//   const isInterState = isInterStateTrip(origin, destination);
 
-//     let distanceKm: number | null = null;
-//     try {
+//   let distanceKm: number | null = null;
+
+//   try {
+//     // Prefer real driving distance
+//     const driving = await this.geocoding.getDrivingDistance(origin, destination);
+//     if (driving) {
+//       distanceKm = driving.distanceKm;
+//     } else {
+//       // Fall back to straight-line distance if Distance Matrix is unavailable
 //       const [a, b] = await this.geocoding.geocodeMany([origin, destination]);
 //       if (a && b) {
 //         distanceKm = round(haversineKm(a.lat, a.lng, b.lat, b.lng), 1);
+//         this.logger.warn(
+//           `Falling back to haversine distance for "${origin}" → "${destination}"`,
+//         );
 //       }
-//     } catch (err) {
-//       this.logger.warn(
-//         `Route geocoding failed for "${origin}" → "${destination}": ${err?.message}`,
-//       );
 //     }
-
-//     return { originState, destinationState, isInterState, distanceKm };
+//   } catch (err) {
+//     this.logger.warn(
+//       `Route distance lookup failed for "${origin}" → "${destination}": ${err?.message}`,
+//     );
 //   }
+
+//   return { originState, destinationState, isInterState, distanceKm };
+// }
+//   // async estimateRoute(origin: string, destination: string): Promise<RouteEstimate> {
+//   //   const originState = resolveNigeriaState(origin);
+//   //   const destinationState = resolveNigeriaState(destination);
+//   //   const isInterState = isInterStateTrip(origin, destination);
+
+//   //   let distanceKm: number | null = null;
+//   //   try {
+//   //     const [a, b] = await this.geocoding.geocodeMany([origin, destination]);
+//   //     if (a && b) {
+//   //       distanceKm = round(haversineKm(a.lat, a.lng, b.lat, b.lng), 1);
+//   //     }
+//   //   } catch (err) {
+//   //     this.logger.warn(
+//   //       `Route geocoding failed for "${origin}" → "${destination}": ${err?.message}`,
+//   //     );
+//   //   }
+
+//   //   return { originState, destinationState, isInterState, distanceKm };
+//   // }
 
 //   // ── The recommendation: distance × rate per km ────────────────────────────
 
@@ -405,20 +499,26 @@ function roundToNearest(v: number, step: number): number {
 //     let recommendedPricePerSeat: number | null = null;
 //     let basis: PriceRecommendation['basis'] = 'unavailable';
 
+//     const cap = clamp(Math.floor(maxSeats), 1, 50);
+
+//     let totalTripCost: number | null = null;
 //     if (route.distanceKm != null) {
-//       // e.g. 10 km × ₦200/km = ₦2,000
-//       recommendedPricePerSeat = roundToNearest(route.distanceKm * perKmRate, 100);
+//       // The WHOLE ride: 205 km × ₦200/km = ₦41,000. Fixed — it does NOT grow
+//       // with the number of seats.
+//       totalTripCost = roundToNearest(route.distanceKm * perKmRate, 100);
+
+//       // Ride-sharing: split the total across the seats so each extra passenger
+//       // lowers everyone's share. Recommended per-seat assumes a full vehicle
+//       // (the cheapest per person): ₦41,000 ÷ 4 = ₦10,250.
+//       recommendedPricePerSeat = roundToNearest(totalTripCost / cap, 100);
 //       basis = 'distance';
 //     }
 
-//     // Total trip cost = price per seat × seats. The MAX (every seat filled) is
-//     // what the driver's "total trip cost" should display; the MIN is a single
-//     // seat. Pass the real vehicle capacity as `maxSeats` for the true maximum.
-//     const cap = clamp(Math.floor(maxSeats), 1, 50);
-//     const minTotal =
-//       recommendedPricePerSeat == null ? null : recommendedPricePerSeat;
-//     const maxTotal =
-//       recommendedPricePerSeat == null ? null : recommendedPricePerSeat * cap;
+//     // Per-seat range by how many actually share the ride:
+//     //   • full vehicle → total ÷ capacity  (lowest per seat)
+//     //   • 1 passenger  → the whole total    (highest per seat)
+//     const minTotal = recommendedPricePerSeat; // all seats filled (cheapest share)
+//     const maxTotal = totalTripCost;           // only one seat taken (whole ride)
 
 //     return {
 //       ...route,
@@ -429,7 +529,7 @@ function roundToNearest(v: number, step: number): number {
 //       maxSeats: cap,
 //       minTotal,
 //       maxTotal,
-//       totalTripCost: maxTotal,
+//       totalTripCost,
 //     };
 //   }
 
@@ -437,37 +537,7 @@ function roundToNearest(v: number, step: number): number {
 
 
 
-// // async estimateForPassengers(
-// //   origin: string,
-// //   destination: string,
-// //   maxSeats = 4,
-// // ): Promise<{
-// //   recommendation: PriceRecommendation;
-// //   perSeat: number | null;
-// //   seats: PassengerFareEstimate[];
-// //   maxSeats: number;
-// //   maxTotal: number | null;
-// // }> {
-// //   const recommendation = await this.recommendPrice(origin, destination);
-// //   const perSeat = recommendation.recommendedPricePerSeat;
-// //   const cap = clamp(Math.floor(maxSeats), 1, 10);
 
-// //   const seats: PassengerFareEstimate[] =
-// //     perSeat == null
-// //       ? []
-// //       : Array.from({ length: cap }, (_, i) => {
-// //           const s = i + 1;
-// //           return { seats: s, pricePerSeat: perSeat, total: perSeat * s };
-// //         });
-
-// //   return {
-// //     recommendation,
-// //     perSeat,
-// //     seats,
-// //     maxSeats: cap,
-// //     maxTotal: perSeat == null ? null : perSeat * cap,
-// //   };
-// // }
 
 // async estimateForPassengers(
 //   origin: string,
@@ -484,26 +554,30 @@ function roundToNearest(v: number, step: number): number {
 // }> {
 //   const cap = clamp(Math.floor(maxSeats), 1, 10);
 //   const recommendation = await this.recommendPrice(origin, destination, cap);
-//   const perSeat = recommendation.recommendedPricePerSeat;
+//   const total = recommendation.totalTripCost;
 
+//   // Cost-split table: with `s` passengers sharing the same ride, each pays
+//   // total ÷ s. More riders ⇒ cheaper per seat.
+//   //   1 rider → ₦41,000   2 → ₦20,500   4 → ₦10,250
 //   const seats: PassengerFareEstimate[] =
-//     perSeat == null
+//     total == null
 //       ? []
 //       : Array.from({ length: cap }, (_, i) => {
 //           const s = i + 1;
-//           return { seats: s, pricePerSeat: perSeat, total: perSeat * s };
+//           const pricePerSeat = roundToNearest(total / s, 100);
+//           return { seats: s, pricePerSeat, total }; // total collected stays the ride cost
 //         });
 
-//   const maxTotal = perSeat == null ? null : perSeat * cap;
+//   const perSeat = recommendation.recommendedPricePerSeat; // full-vehicle share
 
 //   return {
 //     recommendation,
 //     perSeat,
 //     seats,
 //     maxSeats: cap,
-//     minTotal: perSeat == null ? null : perSeat, // single-seat (lowest) total
-//     maxTotal, // all-seats (highest) total
-//     totalTripCost: maxTotal, // what the app shows as "total trip cost"
+//     minTotal: perSeat,    // full vehicle: cheapest per-seat share
+//     maxTotal: total,      // one rider: pays the whole trip
+//     totalTripCost: total, // fixed ride cost the app splits
 //   };
 // }
 
@@ -524,3 +598,4 @@ function roundToNearest(v: number, step: number): number {
 // function roundToNearest(v: number, step: number): number {
 //   return Math.max(step, Math.round(v / step) * step);
 // }
+

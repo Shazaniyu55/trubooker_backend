@@ -30,6 +30,7 @@ import {
   CompleteTripDto,
   CreateTripDto,
   FareEstimateQueryDto,
+  PricePerKmQueryDto,
   PriceRecommendationQueryDto,
   ScanTicketDto,
   SearchTripsDto,
@@ -67,6 +68,7 @@ import { GetTripSummaryByIdUsecase } from '../usecases/gettripsummarybyid.usecas
 import { SearchTripAlterUsecase } from '../usecases/Searchtripalter.usecase';
 import { RecommendTripPriceUsecase } from '../usecases/recommendtripprice.usecase';
 import { EstimateFareUsecase } from '../usecases/estimatefare.usecase';
+import { GetPricePerKmUsecase } from '../usecases/getpriceperkm.usecase';
 
 @ApiTags('Trips')
 @ApiBearerAuth()
@@ -102,7 +104,8 @@ export class TripsController {
       private readonly getTripSummaryByIdUsecase: GetTripSummaryByIdUsecase,
       private readonly searchTripAlterUsecase:SearchTripAlterUsecase,
       private readonly recommendTripPriceUsecase:RecommendTripPriceUsecase,
-      private readonly estimateFareUsecase:EstimateFareUsecase
+      private readonly estimateFareUsecase:EstimateFareUsecase,
+      private readonly getPricePerKmUsecase:GetPricePerKmUsecase
   
   ) {}
 
@@ -153,6 +156,22 @@ export class TripsController {
   ) {
     return this.broker.runUsecases([this.getTripUsecase], {tripId: tripId})
   }
+
+    @Public()
+  @SkipThrottle()
+  @Get('price-per-km')
+  @ApiOperation({
+    summary: 'Get driving distance + price per km for a route (Google Distance Matrix)',
+    description:
+      'Returns the real driving distance between origin and destination via Google, ' +
+      'the current admin-configured rate per km, and the estimated total (distance × rate). ' +
+      'Falls back to straight-line distance if Google is unavailable; distanceKm/estimatedTotal ' +
+      'are null only if neither lookup succeeds.',
+  })
+  pricePerKm(@Query() dto: PricePerKmQueryDto) {
+    return this.broker.runUsecases([this.getPricePerKmUsecase], dto);
+  }
+  
 
   @Public()
   @Get('cancellation/reasons')

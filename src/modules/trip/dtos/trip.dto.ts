@@ -168,6 +168,14 @@ export class SearchTripsDto {
 //   @IsNotEmpty() @IsString() destination: string;
 // }
 
+export class PricePerKmQueryDto {
+  @ApiProperty({ example: 'Lagos' })
+  @IsNotEmpty() @IsString() origin: string;
+
+  @ApiProperty({ example: 'Ibadan' })
+  @IsNotEmpty() @IsString() destination: string;
+}
+
 export class PriceRecommendationQueryDto {
   @ApiProperty({ example: 'Lagos (CMS)' })
   @IsNotEmpty() @IsString() origin: string;

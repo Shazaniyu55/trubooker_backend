@@ -26,7 +26,6 @@ import {
 import {
   isInterStateTrip,
   resolveNigeriaState,
-  resolveNigeriaDistrict,
   districtToken,
 } from '@shared/utils/geo/nigeria-geo.util';
 import { BoardQueryDto, ClaimPoolDto } from '../dtos/trip-matching.dto';
@@ -223,17 +222,17 @@ export class TripMatchingService {
     // }
 
     if (!pool) {
-      // Show the DISTRICT on the board (e.g. "Ekpoma" → "Benin City"), not the
-      // first passenger's exact address. Fall back to the raw text only when
-      // the town isn't recognised.
-      const originLabel = resolveNigeriaDistrict(sample.origin) ?? sample.origin;
-      const destinationLabel =
-        resolveNigeriaDistrict(sample.destination) ?? sample.destination;
-
+      // Keep origin/destination EXACTLY as the passenger requested them —
+      // don't collapse to the resolved district (e.g. "Wuse 2, Abuja Federal
+      // Capital Territory" must stay as typed, not become just "Abuja").
+      // originState/destinationState below still carry the resolved state for
+      // internal filtering/grouping; the district resolver remains available
+      // via resolveNigeriaDistrict()/districtToken() for anything that needs
+      // a normalised grouping label without touching the display text.
       pool = em.create(TripRequestPool, {
         matchKey,
-        origin: originLabel,
-        destination: destinationLabel,
+        origin: sample.origin,
+        destination: sample.destination,
         originState: resolveNigeriaState(sample.origin),
         destinationState: resolveNigeriaState(sample.destination),
         isInterState: isInter,
@@ -955,6 +954,7 @@ async fulfillRequestsForTrip(
     return { expired: stale.length };
   }
 }
+
 // import {
 //   BadRequestException,
 //   ForbiddenException,
@@ -983,6 +983,8 @@ async fulfillRequestsForTrip(
 // import {
 //   isInterStateTrip,
 //   resolveNigeriaState,
+//   resolveNigeriaDistrict,
+//   districtToken,
 // } from '@shared/utils/geo/nigeria-geo.util';
 // import { BoardQueryDto, ClaimPoolDto } from '../dtos/trip-matching.dto';
 // import { ExpoService } from '@modules/notification/services/expo.service';
@@ -1041,9 +1043,16 @@ async fulfillRequestsForTrip(
 //     if (!eligible.length) return { pooled: 0, poolsTouched: 0 };
 
 //     // Bucket by a normalised route+date key.
-//     const buckets = new Map<string, TripRequest[]>();
+//     // const buckets = new Map<string, TripRequest[]>();
+//     // for (const req of eligible) {
+//     //   const key = this.matchKey(req.origin, req.destination, req.requestedDate);
+//     //   const list = buckets.get(key) ?? [];
+//     //   list.push(req);
+//     //   buckets.set(key, list);
+//     // }
+//         const buckets = new Map<string, TripRequest[]>();
 //     for (const req of eligible) {
-//       const key = this.matchKey(req.origin, req.destination, req.requestedDate);
+//       const key = this.requestMatchKey(req);
 //       const list = buckets.get(key) ?? [];
 //       list.push(req);
 //       buckets.set(key, list);
@@ -1093,11 +1102,12 @@ async fulfillRequestsForTrip(
 //     const today = new Date().toISOString().slice(0, 10);
 //     if (req.requestedDate < today) return null;
 
-//     return this.upsertPool(
-//       this.matchKey(req.origin, req.destination, req.requestedDate),
-//       [req],
-//       em,
-//     );
+//     // return this.upsertPool(
+//     //   this.matchKey(req.origin, req.destination, req.requestedDate),
+//     //   [req],
+//     //   em,
+//     // );
+//     return this.upsertPool(this.requestMatchKey(req), [req], em);
 //   }
 
 //   /** Create or extend the MATCHING pool for a route+date and attach members. */
@@ -1139,11 +1149,48 @@ async fulfillRequestsForTrip(
 
 //     const isNew = !pool;
 
+//     // if (!pool) {
+//     //   pool = em.create(TripRequestPool, {
+//     //     matchKey,
+//     //     origin: sample.origin,
+//     //     destination: sample.destination,
+//     //     originState: resolveNigeriaState(sample.origin),
+//     //     destinationState: resolveNigeriaState(sample.destination),
+//     //     isInterState: isInter,
+//     //     requestedDate,
+//     //     departureTime: earliestTime,
+//     //     departureAt,
+//     //     dispatchWindowHours: windowHours,
+//     //     // Straight onto the driver board — no dispatch window. dispatchAt /
+//     //     // dispatchedAt are stamped "now" so the board query and any downstream
+//     //     // reporting stay consistent.
+//     //     dispatchAt: now,
+//     //     dispatchedAt: now,
+//     //     status: TripPoolStatus.BOARD,
+//     //     totalSeats: 0,
+//     //     memberCount: 0,
+//     //   });
+//     //   pool = await em.save(TripRequestPool, pool);
+//     // } else {
+//     //   // Keep the earliest preferred time if a new member wants to leave sooner.
+//     //   if (earliestTime < (pool.departureTime ?? DEFAULT_DEPARTURE_TIME)) {
+//     //     pool.departureTime = earliestTime;
+//     //     pool.departureAt = departureAt;
+//     //   }
+//     // }
+
 //     if (!pool) {
+//       // Show the DISTRICT on the board (e.g. "Ekpoma" → "Benin City"), not the
+//       // first passenger's exact address. Fall back to the raw text only when
+//       // the town isn't recognised.
+//       const originLabel = resolveNigeriaDistrict(sample.origin) ?? sample.origin;
+//       const destinationLabel =
+//         resolveNigeriaDistrict(sample.destination) ?? sample.destination;
+
 //       pool = em.create(TripRequestPool, {
 //         matchKey,
-//         origin: sample.origin,
-//         destination: sample.destination,
+//         origin: originLabel,
+//         destination: destinationLabel,
 //         originState: resolveNigeriaState(sample.origin),
 //         destinationState: resolveNigeriaState(sample.destination),
 //         isInterState: isInter,
@@ -1151,9 +1198,6 @@ async fulfillRequestsForTrip(
 //         departureTime: earliestTime,
 //         departureAt,
 //         dispatchWindowHours: windowHours,
-//         // Straight onto the driver board — no dispatch window. dispatchAt /
-//         // dispatchedAt are stamped "now" so the board query and any downstream
-//         // reporting stay consistent.
 //         dispatchAt: now,
 //         dispatchedAt: now,
 //         status: TripPoolStatus.BOARD,
@@ -1161,8 +1205,8 @@ async fulfillRequestsForTrip(
 //         memberCount: 0,
 //       });
 //       pool = await em.save(TripRequestPool, pool);
-//     } else {
-//       // Keep the earliest preferred time if a new member wants to leave sooner.
+//     }else{
+//           //   // Keep the earliest preferred time if a new member wants to leave sooner.
 //       if (earliestTime < (pool.departureTime ?? DEFAULT_DEPARTURE_TIME)) {
 //         pool.departureTime = earliestTime;
 //         pool.departureAt = departureAt;
@@ -1235,8 +1279,22 @@ async fulfillRequestsForTrip(
 //     return { expired: stale.length };
 //   }
 
-//   /** Notify active drivers that a new pooled request is on the board. */
-//   private async notifyDriversOfBoard(pool: TripRequestPool): Promise<void> {
+//   /**
+//    * Notify active drivers that a new pooled request is on the board.
+//    *
+//    * DISABLED: drivers are intentionally NOT notified when a passenger creates
+//    * a trip request. Both channels are turned off here in one place — the
+//    * in-app NotificationService (notifyMany) and the direct Expo push
+//    * (pushToUser -> ExpoService.sendPushNotification). Drivers can still see
+//    * open requests via the driver board (getDriverBoard); they simply no longer
+//    * receive a notification or a push when a request lands.
+//    *
+//    * To re-enable, delete the early `return` and uncomment the body below.
+//    */
+//   private async notifyDriversOfBoard(_pool: TripRequestPool): Promise<void> {
+//     return;
+
+//     /* --- driver notifications disabled ---
 //     try {
 //       const drivers = await this.driverRepo.find({
 //         where: { licenseVerified: true },
@@ -1248,27 +1306,28 @@ async fulfillRequestsForTrip(
 //       await this.notificationService.notifyMany(userIds, {
 //         title: 'New trip request on the board',
 //         body:
-//           `${pool.totalSeats} passenger(s) want ${pool.origin} → ${pool.destination} ` +
-//           `on ${pool.requestedDate}. Tap to claim.`,
+//           `${_pool.totalSeats} passenger(s) want ${_pool.origin} → ${_pool.destination} ` +
+//           `on ${_pool.requestedDate}. Tap to claim.`,
 //         type: NotificationType.TRIP_REQUEST_BOARD,
 //         data: {
-//           poolId: pool.id,
-//           origin: pool.origin,
-//           destination: pool.destination,
-//           requestedDate: pool.requestedDate,
-//           departureTime: pool.departureTime,
-//           totalSeats: pool.totalSeats,
-//           isInterState: pool.isInterState,
+//           poolId: _pool.id,
+//           origin: _pool.origin,
+//           destination: _pool.destination,
+//           requestedDate: _pool.requestedDate,
+//           departureTime: _pool.departureTime,
+//           totalSeats: _pool.totalSeats,
+//           isInterState: _pool.isInterState,
 //         },
 //       });
 //          // Direct Expo push, per driver
 //     for (const userId of userIds) {
-//       await this.pushToUser(userId, 'New trip request on the board', `${pool.totalSeats} passenger(s) want ${pool.origin} → ${pool.destination} ` +
-//           `on ${pool.requestedDate}. Tap to claim.`);
+//       await this.pushToUser(userId, 'New trip request on the board', `${_pool.totalSeats} passenger(s) want ${_pool.origin} → ${_pool.destination} ` +
+//           `on ${_pool.requestedDate}. Tap to claim.`);
 //     }
 //     } catch (err) {
-//       this.logger.warn(`Failed to notify drivers for pool ${pool.id}: ${err?.message}`);
+//       this.logger.warn(`Failed to notify drivers for pool ${_pool.id}: ${err?.message}`);
 //     }
+//     */
 //   }
 
 //   // ════════════════════════════════════════════════════════════════════════
@@ -1456,11 +1515,107 @@ async fulfillRequestsForTrip(
 //  * transaction/manager, and only touches PENDING requests so nobody is
 //  * approved or notified twice.
 //  */
+// // async fulfillRequestsForTrip(
+// //   args: { tripId: string; origin: string; destination: string; date: string },
+// //   em: EntityManager,
+// // ): Promise<number> {
+// //   const { tripId, origin, destination, date } = args;
+// //   if (!origin || !destination || !date) return 0;
+
+// //   // Both sides must be ISO before comparison. Requests are normalised on
+// //   // create; trips are not, so coerce here.
+// //   const iso = (d: string) => {
+// //     const t = String(d ?? '').trim();
+// //     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+// //     const m = t.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+// //     return m ? `${m[3]}-${m[2]}-${m[1]}` : t;
+// //   };
+
+// //   const tripDate = iso(date);
+// //   const key = this.matchKey(origin, destination, tripDate);
+// //   this.logger.debug(`fulfillRequestsForTrip: trip ${tripId} key=${key}`);
+
+// //   // All requests still waiting. We compare keys in memory so date-format
+// //   // differences never hide a match at the SQL layer.
+// //   const pending = await em.find(TripRequest, {
+// //     where: { status: TripRequestStatus.PENDING },
+// //   });
+
+// //   const matches = pending.filter(
+// //     (r) =>
+// //       this.matchKey(r.origin, r.destination, iso(r.requestedDate)) === key,
+// //   );
+
+// //   if (!matches.length) {
+// //     this.logger.debug(
+// //       `fulfillRequestsForTrip: no PENDING request matched key=${key} ` +
+// //         `(scanned ${pending.length})`,
+// //     );
+// //     return 0;
+// //   }
+
+// //   for (const req of matches) {
+// //     req.status = TripRequestStatus.APPROVED;
+// //     req.linkedTripId = tripId;
+// //     req.processedAt = new Date();
+// //     await em.save(TripRequest, req);
+
+// //     // Close the pool this request was sitting in, if any.
+// //     if (req.poolId) {
+// //       await em.update(
+// //         TripRequestPool,
+// //         { id: req.poolId },
+// //         {
+// //           status: TripPoolStatus.CLAIMED,
+// //           linkedTripId: tripId,
+// //           claimedAt: new Date(),
+// //         },
+// //       );
+// //     }
+
+// //     // Notify the passenger (per-passenger best-effort — one failure must
+// //     // not stop the others).
+// //     try {
+// //       await this.notificationService.notify({
+// //         userId: req.requesterUserId,
+// //         title: 'Your trip request was approved',
+// //         body:
+// //           `A driver created a trip for ${req.origin} → ${req.destination} ` +
+// //           `on ${req.requestedDate}. Tap to book your seat.`,
+// //         type: NotificationType.TRIP_REQUEST_APPROVED,
+// //         data: {
+// //           tripRequestId: req.id,
+// //           tripId,
+// //           origin: req.origin,
+// //           destination: req.destination,
+// //           requestedDate: req.requestedDate,
+// //         },
+// //       });
+// //     } catch (err) {
+// //       this.logger.warn(
+// //         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
+// //       );
+// //     }
+// //     await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
+// //   }
+
+// //   this.logger.log(
+// //     `Trip ${tripId} auto-approved ${matches.length} request(s).`,
+// //   );
+// //   return matches.length;
+// // }
+
 // async fulfillRequestsForTrip(
-//   args: { tripId: string; origin: string; destination: string; date: string },
+//   args: {
+//     tripId: string;
+//     origin: string;
+//     destination: string;
+//     date: string;
+//     departureTime?: string | null;
+//   },
 //   em: EntityManager,
 // ): Promise<number> {
-//   const { tripId, origin, destination, date } = args;
+//   const { tripId, origin, destination, date, departureTime } = args;
 //   if (!origin || !destination || !date) return 0;
 
 //   // Both sides must be ISO before comparison. Requests are normalised on
@@ -1473,8 +1628,14 @@ async fulfillRequestsForTrip(
 //   };
 
 //   const tripDate = iso(date);
-//   const key = this.matchKey(origin, destination, tripDate);
-//   this.logger.debug(`fulfillRequestsForTrip: trip ${tripId} key=${key}`);
+//   // Match on district + date. The driver's exact "Market Road (Ekpoma)" and the
+//   // passenger's "GT Bank Ekpoma" both resolve to the Ekpoma district token.
+//   const routeKey = this.routeDateKey(origin, destination, tripDate);
+//   // The slot the trip's departure time falls in (null when it can't be parsed).
+//   const tripSlot = this.slotForClock(departureTime);
+//   this.logger.debug(
+//     `fulfillRequestsForTrip: trip ${tripId} routeKey=${routeKey} slot=${tripSlot ?? 'any'}`,
+//   );
 
 //   // All requests still waiting. We compare keys in memory so date-format
 //   // differences never hide a match at the SQL layer.
@@ -1482,15 +1643,22 @@ async fulfillRequestsForTrip(
 //     where: { status: TripRequestStatus.PENDING },
 //   });
 
-//   const matches = pending.filter(
-//     (r) =>
-//       this.matchKey(r.origin, r.destination, iso(r.requestedDate)) === key,
-//   );
+//   const matches = pending.filter((r) => {
+//     if (this.routeDateKey(r.origin, r.destination, iso(r.requestedDate)) !== routeKey) {
+//       return false;
+//     }
+//     // Same district + date. Now honour the time-of-day: only pull in passengers
+//     // whose slot matches the trip's. If the trip time is unknown, or a passenger
+//     // stated no slot, treat it as compatible rather than dropping the match.
+//     if (!tripSlot) return true;
+//     const reqSlot = this.requestSlot(r);
+//     return reqSlot === 'any' || reqSlot === tripSlot;
+//   });
 
 //   if (!matches.length) {
 //     this.logger.debug(
-//       `fulfillRequestsForTrip: no PENDING request matched key=${key} ` +
-//         `(scanned ${pending.length})`,
+//       `fulfillRequestsForTrip: no PENDING request matched routeKey=${routeKey} ` +
+//         `slot=${tripSlot ?? 'any'} (scanned ${pending.length})`,
 //     );
 //     return 0;
 //   }
@@ -1537,7 +1705,7 @@ async fulfillRequestsForTrip(
 //         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
 //       );
 //     }
-//         await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
+//     await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
 //   }
 
 //   this.logger.log(
@@ -1547,19 +1715,19 @@ async fulfillRequestsForTrip(
 // }
 
 //   /** `origin|destination|date`, each side normalised to a stable token. */
-//   private matchKey(origin: string, destination: string, date: string): string {
-//     return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;
-//   }
+//   // private matchKey(origin: string, destination: string, date: string): string {
+//   //   return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;
+//   // }
 
 //   /** Normalise a free-text location to a coarse city token for grouping. */
-//   private locationToken(value: string): string {
-//     return String(value ?? '')
-//       .split('(')[0]        // drop "(CMS)" style suffixes
-//       .split(',')[0]        // keep the first comma-segment
-//       .toLowerCase()
-//       .replace(/[^a-z0-9]/g, '')
-//       .trim();
-//   }
+//   // private locationToken(value: string): string {
+//   //   return String(value ?? '')
+//   //     .split('(')[0]        // drop "(CMS)" style suffixes
+//   //     .split(',')[0]        // keep the first comma-segment
+//   //     .toLowerCase()
+//   //     .replace(/[^a-z0-9]/g, '')
+//   //     .trim();
+//   // }
 
 //   private normalizeTime(t?: string | null): string | null {
 //     if (!t) return null;
@@ -1600,5 +1768,147 @@ async fulfillRequestsForTrip(
 //       totalRecords: total,
 //     };
 //     return paged;
+//   }
+
+
+//   // newwwwwwwwwwww
+//    /**
+//    * Route + date key: `originDistrict|destinationDistrict|YYYY-MM-DD`.
+//    * Every address in the same town collapses to one district token, so a
+//    * passenger's exact house address never affects grouping — only the district
+//    * (e.g. Ekpoma → Benin City) does.
+//    */
+//   private routeDateKey(origin: string, destination: string, date: string): string {
+//     return `${this.locationToken(origin)}|${this.locationToken(destination)}|${date}`;
+//   }
+
+//   /**
+//    * Full grouping key: route + date + preferred time slot. Adding the slot
+//    * means a MORNING request and an AFTERNOON request on the same route/date
+//    * fall into DIFFERENT pools, while two morning requests share one. Requests
+//    * with no chosen slot use the 'any' bucket.
+//    */
+//   private matchKey(
+//     origin: string,
+//     destination: string,
+//     date: string,
+//     slot: string,
+//   ): string {
+//     return `${this.routeDateKey(origin, destination, date)}|${slot}`;
+//   }
+
+//   /** Build the full grouping key for a passenger request. */
+//   private requestMatchKey(req: TripRequest): string {
+//     return this.matchKey(
+//       req.origin,
+//       req.destination,
+//       req.requestedDate,
+//       this.requestSlot(req),
+//     );
+//   }
+
+//   /** The time-slot bucket a request belongs to ('morning'/'afternoon'/… or 'any'). */
+//   private requestSlot(req: TripRequest): string {
+//     const slot = req.metadata?.preferredSlot as PreferredTime | undefined;
+//     return slot ?? 'any';
+//   }
+
+//   /**
+//    * Map a concrete clock time (a driver's trip departure time) to a slot bucket,
+//    * so a created trip only auto-matches passengers who asked for that part of
+//    * the day. Returns null when the time can't be parsed — callers then match
+//    * every slot on the route/date rather than dropping anyone.
+//    */
+//   private slotForClock(time?: string | null): string | null {
+//     const hhmm = this.normalizeTime(time);
+//     if (!hhmm) return null;
+//     const hour = Number(hhmm.slice(0, 2));
+//     if (hour >= 5 && hour < 12) return PreferredTime.MORNING;
+//     if (hour >= 12 && hour < 17) return PreferredTime.AFTERNOON;
+//     if (hour >= 17 && hour < 21) return PreferredTime.EVENING;
+//     return null;
+//   }
+
+//   /** Normalise a free-text location to its district token for grouping. */
+//   private locationToken(value: string): string {
+//     return districtToken(value);
+//   }
+
+
+
+//     /**
+//    * Expire individual trip requests whose requested date + departure time has
+//    * passed while they are still active (PENDING, or APPROVED but never booked).
+//    * BOOKED / FULFILLED / DECLINED / already-EXPIRED requests are left alone.
+//    *
+//    * When a request carries no usable time-of-day we fall back to the END of the
+//    * requested day, so a same-day request without a stated time is not expired
+//    * prematurely. The passenger is notified (best-effort) only when the request
+//    * expired recently, so a one-off pass over a backlog of old requests never
+//    * blasts historical users with push notifications.
+//    */
+//   async expireStaleRequests(): Promise<{ expired: number }> {
+//     const now = new Date();
+//     const today = now.toISOString().slice(0, 10); // YYYY-MM-DD
+
+//     // Coarse DB filter: only requests on/before today still in an active state.
+//     // Exact time-of-day is refined in memory below (requestedDate is a date).
+//     const candidates = await this.requestRepo.find({
+//       where: {
+//         status: In([TripRequestStatus.PENDING, TripRequestStatus.APPROVED]),
+//         requestedDate: LessThanOrEqual(today),
+//       },
+//     });
+//     if (!candidates.length) return { expired: 0 };
+
+//     const departureOf = (req: TripRequest): Date => {
+//       const time = this.slotDepartureTime(req) ?? '23:59:59';
+//       const at = new Date(`${req.requestedDate}T${time}`);
+//       return Number.isNaN(at.getTime())
+//         ? new Date(`${req.requestedDate}T23:59:59`)
+//         : at;
+//     };
+
+//     const stale = candidates.filter((req) => {
+//       const at = departureOf(req);
+//       return !Number.isNaN(at.getTime()) && at <= now;
+//     });
+//     if (!stale.length) return { expired: 0 };
+
+//     // Only notify for requests that lapsed within the last 48h — keeps a first
+//     // run over historical data from spamming everyone.
+//     const notifyCutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+
+//     for (const req of stale) {
+//       req.status = TripRequestStatus.EXPIRED;
+//       req.processedAt = now;
+//       await this.requestRepo.save(req);
+
+//       if (departureOf(req) >= notifyCutoff) {
+//         try {
+//           await this.notificationService.notify({
+//             userId: req.requesterUserId,
+//             title: 'Trip request expired',
+//             body:
+//               `Your request for ${req.origin} → ${req.destination} on ` +
+//               `${req.requestedDate} has expired because the travel date passed.`,
+//             type: NotificationType.TRIP_REQUEST_EXPIRED,
+//             data: {
+//               tripRequestId: req.id,
+//               origin: req.origin,
+//               destination: req.destination,
+//               requestedDate: req.requestedDate,
+//             },
+//           });
+//         } catch (err) {
+//           this.logger.warn(
+//             `Failed to notify passenger ${req.requesterUserId} of expiry: ${err?.message}`,
+//           );
+//         }
+//       }
+//     }
+
+//     this.logger.log(`Expired ${stale.length} stale trip request(s).`);
+//     return { expired: stale.length };
 //   }
 // }
