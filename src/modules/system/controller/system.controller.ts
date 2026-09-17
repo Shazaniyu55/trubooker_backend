@@ -9,6 +9,8 @@ import { RolesGuard } from '@shared/guards/roles.guard';
 import { PermissionsGuard } from '@shared/guards/permissions.guard';
 import { AdminOnly } from '@shared/decorators/roles.decorator';
 import { PreferredTimeSlotDto, SetPreferredTimeSlotsDto } from '../dto/timeslot.dto';
+import { SetDispatchWindowDto } from '../dto/dispatch.window';
+
 
 @ServiceName('system settings')
 @ApiTags('System Settings')
@@ -36,6 +38,25 @@ export class SystemSettingController {
   @ApiOperation({ summary: 'Get price control settings' })
   getPriceControl() {
     return this.settingService.getPriceControl();
+  }
+
+    @AdminOnly()
+  @Patch('dispatch-window')
+  @ApiOperation({
+    summary: 'Set driver-board dispatch window hours (intra-state / inter-state)',
+    description:
+      'How many hours before departure a matched pool of requests is pushed to the ' +
+      'driver board. Either field alone updates just that one trip type.',
+  })
+  setDispatchWindow(@Body() dto: SetDispatchWindowDto) {
+    return this.settingService.setDispatchWindow(dto);
+  }
+
+  @AdminOnly()
+  @Get('dispatch-window')
+  @ApiOperation({ summary: 'Get driver-board dispatch window hours (intra-state / inter-state)' })
+  getDispatchWindow() {
+    return this.settingService.getDispatchWindow();
   }
 
   @AdminOnly()
