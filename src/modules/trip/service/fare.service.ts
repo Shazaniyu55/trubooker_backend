@@ -19,12 +19,14 @@ import {
  *     price per seat    = total trip cost ÷ seats
  *
  * The total is the cost of running the whole trip; passengers SPLIT it, so the
- * more people share, the less each pays. The rate per km is set by the admin
- * (price control → perKmRate). When the
- * admin hasn't set one yet we fall back to DEFAULT_PER_KM_RATE. If we can't
+ * more people share, the less each pays. The rate per km DIFFERS by trip type
+ * — inter-state and intra-state are priced independently (admin-configurable
+ * via price control → interStatePerKmRate / intraStatePerKmRate). When the
+ * admin hasn't set one yet we fall back to the defaults below. If we can't
  * work out the distance (geocoding unavailable), there is no estimate.
  */
-const DEFAULT_PER_KM_RATE = 200; // NGN per km, used only until admin sets one
+const DEFAULT_INTER_STATE_PER_KM_RATE = 200; // NGN/km, cross-state, until admin sets one
+const DEFAULT_INTRA_STATE_PER_KM_RATE = 315; // NGN/km, same-state, until admin sets one
 
 export interface RouteEstimate {
   originState: string | null;
@@ -77,15 +79,24 @@ export class FareService {
 
   // ── Config ──────────────────────────────────────────────────────────────
 
-  /** The admin's rate per km, or the default when none is configured. */
-  private async perKmRate(): Promise<number> {
+  /**
+   * The admin's rate per km for this trip type, or the default when none is
+   * configured. Inter-state and intra-state are priced independently — this
+   * is the fix for "price per km should differ by trip type" — so callers
+   * must always know isInterState before pricing anything.
+   */
+  private async perKmRate(isInterState: boolean): Promise<number> {
     let settings: Partial<PriceControlDto> = {};
     try {
       settings = (await this.systemSettings.getPriceControl()) ?? {};
     } catch {
       // No price-control row yet — fall back to the default silently.
     }
-    return num(settings.perKmRate, DEFAULT_PER_KM_RATE);
+    const rate = isInterState ? settings.interStatePerKmRate : settings.intraStatePerKmRate;
+    const fallback = isInterState
+      ? DEFAULT_INTER_STATE_PER_KM_RATE
+      : DEFAULT_INTRA_STATE_PER_KM_RATE;
+    return num(rate, fallback);
   }
 
   // ── Route shape (states + distance) ───────────────────────────────────────
@@ -134,13 +145,15 @@ export class FareService {
   ): Promise<{
     origin: string;
     destination: string;
+    isInterState: boolean;
     distanceKm: number | null;
     durationMinutes: number | null;
     currency: 'NGN';
     perKmRate: number;
     estimatedTotal: number | null;
   }> {
-    const perKmRate = await this.perKmRate();
+    const isInterState = isInterStateTrip(origin, destination);
+    const perKmRate = await this.perKmRate(isInterState);
 
     let distanceKm: number | null = null;
     let durationMinutes: number | null = null;
@@ -170,6 +183,7 @@ export class FareService {
     return {
       origin,
       destination,
+      isInterState,
       distanceKm,
       durationMinutes,
       currency: 'NGN',
@@ -205,8 +219,8 @@ export class FareService {
     destination: string,
     maxSeats = 4,
   ): Promise<PriceRecommendation> {
-    const perKmRate = await this.perKmRate();
     const route = await this.estimateRoute(origin, destination);
+    const perKmRate = await this.perKmRate(route.isInterState);
 
     let recommendedPricePerSeat: number | null = null;
     let basis: PriceRecommendation['basis'] = 'unavailable';
@@ -343,7 +357,6 @@ function roundToNearest(v: number, step: number): number {
 
 
 
-
 // import { Injectable, Logger } from '@nestjs/common';
 // import { InjectRepository } from '@nestjs/typeorm';
 // import { Repository } from 'typeorm';
@@ -466,6 +479,64 @@ function roundToNearest(v: number, step: number): number {
 
 //   return { originState, destinationState, isInterState, distanceKm };
 // }
+
+//   // ── Plain distance + price-per-km (Google Distance Matrix) ───────────────
+
+//   /**
+//    * Lean route pricing: just the Google-derived driving distance, the current
+//    * per-km rate, and distance × rate. No seats/band logic — for callers that
+//    * only want "how far, and how much per km".
+//    */
+//   async getPricePerKm(
+//     origin: string,
+//     destination: string,
+//   ): Promise<{
+//     origin: string;
+//     destination: string;
+//     distanceKm: number | null;
+//     durationMinutes: number | null;
+//     currency: 'NGN';
+//     perKmRate: number;
+//     estimatedTotal: number | null;
+//   }> {
+//     const perKmRate = await this.perKmRate();
+
+//     let distanceKm: number | null = null;
+//     let durationMinutes: number | null = null;
+//     try {
+//       const driving = await this.geocoding.getDrivingDistance(origin, destination);
+//       if (driving) {
+//         distanceKm = driving.distanceKm;
+//         durationMinutes = driving.durationMinutes;
+//       } else {
+//         const [a, b] = await this.geocoding.geocodeMany([origin, destination]);
+//         if (a && b) {
+//           distanceKm = round(haversineKm(a.lat, a.lng, b.lat, b.lng), 1);
+//           this.logger.warn(
+//             `price-per-km: falling back to haversine for "${origin}" → "${destination}"`,
+//           );
+//         }
+//       }
+//     } catch (err) {
+//       this.logger.warn(
+//         `price-per-km: distance lookup failed for "${origin}" → "${destination}": ${err?.message}`,
+//       );
+//     }
+
+//     const estimatedTotal =
+//       distanceKm != null ? roundToNearest(distanceKm * perKmRate, 100) : null;
+
+//     return {
+//       origin,
+//       destination,
+//       distanceKm,
+//       durationMinutes,
+//       currency: 'NGN',
+//       perKmRate,
+//       estimatedTotal,
+//     };
+//   }
+
 //   // async estimateRoute(origin: string, destination: string): Promise<RouteEstimate> {
 //   //   const originState = resolveNigeriaState(origin);
 //   //   const destinationState = resolveNigeriaState(destination);
@@ -537,7 +608,37 @@ function roundToNearest(v: number, step: number): number {
 
 
 
+// // async estimateForPassengers(
+// //   origin: string,
+// //   destination: string,
+// //   maxSeats = 4,
+// // ): Promise<{
+// //   recommendation: PriceRecommendation;
+// //   perSeat: number | null;
+// //   seats: PassengerFareEstimate[];
+// //   maxSeats: number;
+// //   maxTotal: number | null;
+// // }> {
+// //   const recommendation = await this.recommendPrice(origin, destination);
+// //   const perSeat = recommendation.recommendedPricePerSeat;
+// //   const cap = clamp(Math.floor(maxSeats), 1, 10);
 
+// //   const seats: PassengerFareEstimate[] =
+// //     perSeat == null
+// //       ? []
+// //       : Array.from({ length: cap }, (_, i) => {
+// //           const s = i + 1;
+// //           return { seats: s, pricePerSeat: perSeat, total: perSeat * s };
+// //         });
+
+// //   return {
+// //     recommendation,
+// //     perSeat,
+// //     seats,
+// //     maxSeats: cap,
+// //     maxTotal: perSeat == null ? null : perSeat * cap,
+// //   };
+// // }
 
 // async estimateForPassengers(
 //   origin: string,
@@ -598,4 +699,8 @@ function roundToNearest(v: number, step: number): number {
 // function roundToNearest(v: number, step: number): number {
 //   return Math.max(step, Math.round(v / step) * step);
 // }
+
+
+
+
 

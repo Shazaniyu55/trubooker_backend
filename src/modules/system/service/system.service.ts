@@ -9,10 +9,12 @@ import { CACHE_TTL } from '@modules/cache/redis-cache.constants';
 import { PreferredTimeSlotDto, SetPreferredTimeSlotsDto } from '../dto/timeslot.dto';
 
 /**
- * Must match FareService.DEFAULT_PER_KM_RATE — used only as a display
- * fallback here when nothing has ever been configured.
+ * Must match FareService's defaults — used only as a display/normalization
+ * fallback here when nothing has ever been configured. Inter-state and
+ * intra-state are priced independently.
  */
-const DEFAULT_PER_KM_RATE = 200;
+const DEFAULT_INTER_STATE_PER_KM_RATE = 200;
+const DEFAULT_INTRA_STATE_PER_KM_RATE = 315;
 
 
 @Injectable()
@@ -69,9 +71,9 @@ async setPricePerKm(pricePerKm: number) {
   where: { key: SystemSettingEnum.PRICE_CONTROL },
  });
  if (!setting) throw new NotFoundException('Price control setting not found');
- // `perKmRate` is the field FareService actually reads when calculating
- // fares — write both so the rate takes effect immediately AND the admin
- // sees the value under the name they set it with (`pricePerKm`).
+ // LEGACY flat-rate route — kept for back-compat callers only. It writes
+ // the old shared fields, which FareService no longer reads (rates now
+ // differ by trip type — see setPerKmRate). Prefer that instead.
  setting.value = { ...setting.value, perKmRate: pricePerKm, pricePerKm };
  const saved = await this.settingRepo.save(setting);
  await this.cache.del(this.PRICE_KEY);
@@ -79,19 +81,59 @@ async setPricePerKm(pricePerKm: number) {
 }
 
 /**
- * Reconciles the two names this rate has been saved under historically.
- * `perKmRate` is canonical (FareService reads it); `pricePerKm` is the name
- * the dedicated admin "set price per km" route used to write exclusively,
- * so older rows may only have that. Always returns both, in sync, so every
- * caller — fare calculation, get-all, get-price-control — agrees.
+ * Set the per-km rate — separately for inter-state and intra-state trips,
+ * since they're priced independently. Either field alone is fine (updates
+ * just that one); at least one must be provided.
+ */
+async setPerKmRate(dto: {
+  interStatePerKmRate?: number;
+  intraStatePerKmRate?: number;
+}) {
+  if (dto.interStatePerKmRate == null && dto.intraStatePerKmRate == null) {
+    throw new BadRequestException(
+      'Provide interStatePerKmRate and/or intraStatePerKmRate',
+    );
+  }
+  const setting = await this.settingRepo.findOne({
+    where: { key: SystemSettingEnum.PRICE_CONTROL },
+  });
+  if (!setting) throw new NotFoundException('Price control setting not found');
+  setting.value = { ...setting.value, ...dto };
+  const saved = await this.settingRepo.save(setting);
+  await this.cache.del(this.PRICE_KEY);
+  return saved;
+}
+
+/** Just the two per-km rates, with defaults filled in if unset. */
+async getPerKmRate(): Promise<{
+  interStatePerKmRate: number;
+  intraStatePerKmRate: number;
+}> {
+  const setting = await this.settingRepo.findOne({
+    where: { key: SystemSettingEnum.PRICE_CONTROL },
+  });
+  const settings = this.normalizePriceControl(setting?.value);
+  return {
+    interStatePerKmRate: settings.interStatePerKmRate,
+    intraStatePerKmRate: settings.intraStatePerKmRate,
+  };
+}
+
+/**
+ * Reconciles the legacy single-rate fields with the new per-trip-type rates,
+ * and fills in defaults. `perKmRate`/`pricePerKm` are the OLD shared fields
+ * (no longer read by FareService); `interStatePerKmRate`/
+ * `intraStatePerKmRate` are canonical now. We don't let the legacy flat rate
+ * silently override the type-specific defaults — that would defeat the
+ * point of pricing them differently — so it's shown as-is for reference but
+ * never used to fill either new field.
  */
 private normalizePriceControl(
   value: Partial<PriceControlDto> | null | undefined,
 ): PriceControlDto {
   const v = { ...(value ?? {}) } as PriceControlDto;
-  const rate = v.perKmRate ?? v.pricePerKm ?? DEFAULT_PER_KM_RATE;
-  v.perKmRate = rate;
-  v.pricePerKm = rate;
+  v.interStatePerKmRate = v.interStatePerKmRate ?? DEFAULT_INTER_STATE_PER_KM_RATE;
+  v.intraStatePerKmRate = v.intraStatePerKmRate ?? DEFAULT_INTRA_STATE_PER_KM_RATE;
   return v;
 }
 
@@ -270,6 +312,8 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
           maxTripPrice: 100000,
           intraStateDispatchWindowHours: 12,
           interStateDispatchWindowHours: 18,
+          interStatePerKmRate: 200,
+          intraStatePerKmRate: 315,
         } as PriceControlDto,
       },
       {
@@ -301,6 +345,8 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
   }
 }
 }
+
+
 // // system-setting.service.ts
 // import { SystemSetting } from '@modules/core/entities/system-setting.entity';
 // import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
@@ -310,6 +356,12 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
 // import { RedisCacheService } from '@modules/cache/redis-cache.service';
 // import { CACHE_TTL } from '@modules/cache/redis-cache.constants';
 // import { PreferredTimeSlotDto, SetPreferredTimeSlotsDto } from '../dto/timeslot.dto';
+
+// /**
+//  * Must match FareService.DEFAULT_PER_KM_RATE — used only as a display
+//  * fallback here when nothing has ever been configured.
+//  */
+// const DEFAULT_PER_KM_RATE = 200;
 
 
 // @Injectable()
@@ -333,7 +385,12 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
 //   // ─── Get All Settings ────────────────────────────────────────────────────────
 
 //   async getAllSettings() {
-//     return this.settingRepo.find({ order: { createdAt: 'ASC' } });
+//     const settings = await this.settingRepo.find({ order: { createdAt: 'ASC' } });
+//     return settings.map((s) =>
+//       s.key === SystemSettingEnum.PRICE_CONTROL
+//         ? { ...s, value: this.normalizePriceControl(s.value) }
+//         : s,
+//     );
 //   }
 
 //   async getSettingByKey(key: SystemSettingEnum) {
@@ -361,10 +418,30 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
 //   where: { key: SystemSettingEnum.PRICE_CONTROL },
 //  });
 //  if (!setting) throw new NotFoundException('Price control setting not found');
-//  setting.value = { ...setting.value, pricePerKm };
+//  // `perKmRate` is the field FareService actually reads when calculating
+//  // fares — write both so the rate takes effect immediately AND the admin
+//  // sees the value under the name they set it with (`pricePerKm`).
+//  setting.value = { ...setting.value, perKmRate: pricePerKm, pricePerKm };
 //  const saved = await this.settingRepo.save(setting);
 //  await this.cache.del(this.PRICE_KEY);
 //  return saved;
+// }
+
+// /**
+//  * Reconciles the two names this rate has been saved under historically.
+//  * `perKmRate` is canonical (FareService reads it); `pricePerKm` is the name
+//  * the dedicated admin "set price per km" route used to write exclusively,
+//  * so older rows may only have that. Always returns both, in sync, so every
+//  * caller — fare calculation, get-all, get-price-control — agrees.
+//  */
+// private normalizePriceControl(
+//   value: Partial<PriceControlDto> | null | undefined,
+// ): PriceControlDto {
+//   const v = { ...(value ?? {}) } as PriceControlDto;
+//   const rate = v.perKmRate ?? v.pricePerKm ?? DEFAULT_PER_KM_RATE;
+//   v.perKmRate = rate;
+//   v.pricePerKm = rate;
+//   return v;
 // }
 
 // /**
@@ -493,7 +570,7 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
 //         where: { key: SystemSettingEnum.PRICE_CONTROL },
 //       });
 //       if (!setting) throw new NotFoundException('Price control setting not found');
-//       return setting.value as PriceControlDto;
+//       return this.normalizePriceControl(setting.value);
 //     },
 //     CACHE_TTL.HOUR,
 //   );

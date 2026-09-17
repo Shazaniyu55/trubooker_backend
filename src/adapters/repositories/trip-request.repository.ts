@@ -145,6 +145,30 @@ export class TripRequestRepository extends Repository<TripRequest> {
 
     const saved = await manager.save(TripRequest, entity);
 
+    // Best-effort confirmation to the PASSENGER who made the request — this
+    // is what triggers their Expo push. Separate try/catch from the admin
+    // fan-out below so a failure notifying admins can never suppress the
+    // passenger's own confirmation, or vice versa.
+    try {
+      await this.notificationService.notify({
+        userId: saved.requesterUserId,
+        title: 'Trip request received',
+        body: `We've got your request for ${saved.origin} → ${saved.destination} on ${saved.requestedDate}. We'll notify you once it's matched.`,
+        type: NotificationType.TRIP_REQUEST_CREATED,
+        data: {
+          tripRequestId: saved.id,
+          origin: saved.origin,
+          destination: saved.destination,
+          requestedDate: saved.requestedDate,
+          seats: saved.seats,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to notify passenger ${saved.requesterUserId} of their own request ${saved.id}: ${err?.message}`,
+      );
+    }
+
     // Best-effort fan-out to every active admin (dashboard + push).
     try {
       await this.notificationService.notifyAdmins({
@@ -378,6 +402,8 @@ export class TripRequestRepository extends Repository<TripRequest> {
   }
 }
 
+
+
 // import {
 //   BadRequestException,
 //   Injectable,
@@ -388,12 +414,14 @@ export class TripRequestRepository extends Repository<TripRequest> {
 // import { Brackets, EntityManager, Repository } from 'typeorm';
 
 // import { TripRequest } from '@modules/core/entities/trip-request.entity';
+// import { TripRequestPool } from '@modules/core/entities/trip-request-pool.entity';
 // import { Passenger } from '@modules/core/entities/passenger.entity';
 // import { Trip } from '@modules/core/entities/trip.entity';
 
 // import { NotificationService } from '@modules/notification/services/notification.service';
 // import { PagedDto } from '@shared/interface/paged.interface';
-// import { NotificationType, TripRequestStatus } from '../../types/enums';
+// import { NotificationType, TripRequestStatus, TripPoolStatus, PREFERRED_TIME_RANGE_TO_SLOT,
+//  } from '../../types/enums';
 
 // import {
 //   ApproveTripRequestDto,
@@ -445,6 +473,30 @@ export class TripRequestRepository extends Repository<TripRequest> {
 //     return arr.length ? arr : undefined;
 //   }
 
+//   /**
+//    * Pooling is automatic, not an admin job. Once a request has been grouped
+//    * into a pool the matching pipeline owns it (board → driver claim), so admin
+//    * approve/decline must not touch it and quietly corrupt the pool's counts.
+//    * The only exception is an EXPIRED pool — departure passed with no driver —
+//    * where an admin stepping in as a fallback is legitimate.
+//    */
+//   private async assertNotAutoPooled(
+//     manager: EntityManager,
+//     req: TripRequest,
+//     action: 'approved' | 'declined',
+//   ): Promise<void> {
+//     if (!req.poolId) return;
+//     const pool = await manager.findOne(TripRequestPool, {
+//       where: { id: req.poolId },
+//     });
+//     if (pool && pool.status !== TripPoolStatus.EXPIRED) {
+//       throw new BadRequestException(
+//         `This request is already being matched automatically (pool ${pool.status}) ` +
+//           `and can't be ${action} by an admin. It will be offered to drivers on the board.`,
+//       );
+//     }
+//   }
+
 //   // ─── Passenger: create a request → notify admins ─────────────────────────
 //   async createRequest(
 //     requesterUserId: string,
@@ -476,6 +528,14 @@ export class TripRequestRepository extends Repository<TripRequest> {
 //     });
 //     if (existing) return existing;
 
+//        // The client sends the display range directly (e.g. "7:00 AM - 9:00 AM").
+//     // Store it as-is; derive the slot so the matcher can compute a concrete
+//     // departure time and grouping stays consistent.
+//     const preferredTime = dto.preferredTime ?? null;
+//     const preferredSlot = preferredTime
+//       ? PREFERRED_TIME_RANGE_TO_SLOT[preferredTime] ?? null
+//       : null;
+
 //     const entity = manager.create(TripRequest, {
 //       requesterUserId,
 //       passengerId: passenger?.id ?? null,
@@ -483,8 +543,10 @@ export class TripRequestRepository extends Repository<TripRequest> {
 //       destination: dto.destination,
 //       requestedDate: iso,
 //       seats: dto.seats ?? 1,
+//       preferredTime,
 //       note: dto.note ?? null,
 //       status: TripRequestStatus.PENDING,
+//       metadata: preferredSlot ? { preferredSlot } : null,
 //     });
 
 //     const saved = await manager.save(TripRequest, entity);
@@ -610,6 +672,7 @@ export class TripRequestRepository extends Repository<TripRequest> {
 //         `Request already ${req.status}. Only pending requests can be approved.`,
 //       );
 //     }
+//     await this.assertNotAutoPooled(manager, req, 'approved');
 
 //     let linkedTripId: string | null = null;
 //     if (dto.tripId) {
@@ -669,6 +732,7 @@ export class TripRequestRepository extends Repository<TripRequest> {
 //         `Request already ${req.status}. Only pending requests can be declined.`,
 //       );
 //     }
+//     await this.assertNotAutoPooled(manager, req, 'declined');
 
 //     req.status = TripRequestStatus.DECLINED;
 //     req.adminNote = dto.reason;
@@ -719,3 +783,4 @@ export class TripRequestRepository extends Repository<TripRequest> {
 //     return paged;
 //   }
 // }
+
