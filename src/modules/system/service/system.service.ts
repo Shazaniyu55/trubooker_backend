@@ -8,6 +8,12 @@ import { RedisCacheService } from '@modules/cache/redis-cache.service';
 import { CACHE_TTL } from '@modules/cache/redis-cache.constants';
 import { PreferredTimeSlotDto, SetPreferredTimeSlotsDto } from '../dto/timeslot.dto';
 
+/**
+ * Must match FareService.DEFAULT_PER_KM_RATE — used only as a display
+ * fallback here when nothing has ever been configured.
+ */
+const DEFAULT_PER_KM_RATE = 200;
+
 
 @Injectable()
 export class SystemSettingService {
@@ -30,7 +36,12 @@ export class SystemSettingService {
   // ─── Get All Settings ────────────────────────────────────────────────────────
 
   async getAllSettings() {
-    return this.settingRepo.find({ order: { createdAt: 'ASC' } });
+    const settings = await this.settingRepo.find({ order: { createdAt: 'ASC' } });
+    return settings.map((s) =>
+      s.key === SystemSettingEnum.PRICE_CONTROL
+        ? { ...s, value: this.normalizePriceControl(s.value) }
+        : s,
+    );
   }
 
   async getSettingByKey(key: SystemSettingEnum) {
@@ -58,10 +69,30 @@ async setPricePerKm(pricePerKm: number) {
   where: { key: SystemSettingEnum.PRICE_CONTROL },
  });
  if (!setting) throw new NotFoundException('Price control setting not found');
- setting.value = { ...setting.value, pricePerKm };
+ // `perKmRate` is the field FareService actually reads when calculating
+ // fares — write both so the rate takes effect immediately AND the admin
+ // sees the value under the name they set it with (`pricePerKm`).
+ setting.value = { ...setting.value, perKmRate: pricePerKm, pricePerKm };
  const saved = await this.settingRepo.save(setting);
  await this.cache.del(this.PRICE_KEY);
  return saved;
+}
+
+/**
+ * Reconciles the two names this rate has been saved under historically.
+ * `perKmRate` is canonical (FareService reads it); `pricePerKm` is the name
+ * the dedicated admin "set price per km" route used to write exclusively,
+ * so older rows may only have that. Always returns both, in sync, so every
+ * caller — fare calculation, get-all, get-price-control — agrees.
+ */
+private normalizePriceControl(
+  value: Partial<PriceControlDto> | null | undefined,
+): PriceControlDto {
+  const v = { ...(value ?? {}) } as PriceControlDto;
+  const rate = v.perKmRate ?? v.pricePerKm ?? DEFAULT_PER_KM_RATE;
+  v.perKmRate = rate;
+  v.pricePerKm = rate;
+  return v;
 }
 
 /**
@@ -190,7 +221,7 @@ async getPriceControl(): Promise<PriceControlDto> {
         where: { key: SystemSettingEnum.PRICE_CONTROL },
       });
       if (!setting) throw new NotFoundException('Price control setting not found');
-      return setting.value as PriceControlDto;
+      return this.normalizePriceControl(setting.value);
     },
     CACHE_TTL.HOUR,
   );
@@ -270,7 +301,6 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
   }
 }
 }
-
 // // system-setting.service.ts
 // import { SystemSetting } from '@modules/core/entities/system-setting.entity';
 // import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
@@ -335,6 +365,53 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
 //  const saved = await this.settingRepo.save(setting);
 //  await this.cache.del(this.PRICE_KEY);
 //  return saved;
+// }
+
+// /**
+//  * Set the driver-board dispatch window hours — how far ahead of departure a
+//  * MATCHING pool is pushed to the board — for intra-state and/or inter-state
+//  * trips. Either field alone is fine (updates just that one); at least one
+//  * must be provided. Stored on the same price-control row as everything else
+//  * price/timing related, so `getPriceControl()` and the fare/matching logic
+//  * that already reads it keep working unchanged.
+//  */
+// async setDispatchWindow(dto: {
+//   intraStateDispatchWindowHours?: number;
+//   interStateDispatchWindowHours?: number;
+// }) {
+//   if (
+//     dto.intraStateDispatchWindowHours == null &&
+//     dto.interStateDispatchWindowHours == null
+//   ) {
+//     throw new BadRequestException(
+//       'Provide intraStateDispatchWindowHours and/or interStateDispatchWindowHours',
+//     );
+//   }
+//   const setting = await this.settingRepo.findOne({
+//     where: { key: SystemSettingEnum.PRICE_CONTROL },
+//   });
+//   if (!setting) throw new NotFoundException('Price control setting not found');
+//   setting.value = { ...setting.value, ...dto };
+//   const saved = await this.settingRepo.save(setting);
+//   await this.cache.del(this.PRICE_KEY);
+//   return saved;
+// }
+
+// /** Just the two dispatch-window hours, with defaults filled in if unset. */
+// async getDispatchWindow(): Promise<{
+//   intraStateDispatchWindowHours: number;
+//   interStateDispatchWindowHours: number;
+// }> {
+//   let settings: Partial<PriceControlDto> = {};
+//   try {
+//     settings = (await this.getPriceControl()) ?? {};
+//   } catch {
+//     // No price-control row yet — fall back to defaults silently.
+//   }
+//   return {
+//     intraStateDispatchWindowHours: settings.intraStateDispatchWindowHours ?? 12,
+//     interStateDispatchWindowHours: settings.interStateDispatchWindowHours ?? 18,
+//   };
 // }
 
 
@@ -496,3 +573,4 @@ async getReferralProgram(): Promise<ReferralProgramDto> {
 //   }
 // }
 // }
+

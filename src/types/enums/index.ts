@@ -203,6 +203,33 @@ export enum EscrowStatus {
 //   defaultInterStateFare?: number; // recommendation when distance can't be computed for an inter-state trip
 // }
 
+// export interface PriceControlDto {
+//   agentEarningAmount: number;     // max an agent can earn per referred driver
+//   platformCommissionRate: number; // % platform takes per booking
+//   driverEarningRate: number;      // % driver earns per booking
+//   minTripPrice: number;           // minimum price for a trip
+//   maxTripPrice: number;           // maximum price for a trip
+ 
+//   // ── Fare recommendation model (all optional; sensible defaults applied) ──
+//   // Used to recommend a fair per-seat price to drivers so they don't
+//   // exaggerate, and to show passengers an estimated cost when no trip exists.
+//   baseFare?: number;              // flat NGN added to every route
+//   perKmRate?: number;             // NGN charged per km of route distance
+//   interStateMultiplier?: number;  // multiply the distance rate for inter-state trips (e.g. 1.15)
+//   priceBandPercent?: number;      // how far above/below the recommendation a driver may price (e.g. 15 = ±15%)
+//   fallbackPricePerKm?: number;    // used only when distance is known but rates are unset
+//   defaultIntraStateFare?: number; // recommendation when distance can't be computed for an intra-state trip
+//   defaultInterStateFare?: number; // recommendation when distance can't be computed for an inter-state trip
+ 
+//   // ── Driver-board dispatch windows (all optional; sensible defaults applied) ──
+//   // How many hours before departure a MATCHING pool is pushed to the driver
+//   // board. Inter-state trips get a longer lead time by default since drivers
+//   // need more notice to plan a cross-state run.
+//   intraStateDispatchWindowHours?: number; // hours before departure, same-state trips (default 12)
+//   interStateDispatchWindowHours?: number; // hours before departure, cross-state trips (default 18)
+// }
+
+
 export interface PriceControlDto {
   agentEarningAmount: number;     // max an agent can earn per referred driver
   platformCommissionRate: number; // % platform takes per booking
@@ -214,7 +241,8 @@ export interface PriceControlDto {
   // Used to recommend a fair per-seat price to drivers so they don't
   // exaggerate, and to show passengers an estimated cost when no trip exists.
   baseFare?: number;              // flat NGN added to every route
-  perKmRate?: number;             // NGN charged per km of route distance
+  perKmRate?: number;             // NGN charged per km of route distance — the field FareService reads
+  pricePerKm?: number;            // alias of perKmRate; kept in sync automatically, exists so the "set price per km" admin route's field name reads back correctly
   interStateMultiplier?: number;  // multiply the distance rate for inter-state trips (e.g. 1.15)
   priceBandPercent?: number;      // how far above/below the recommendation a driver may price (e.g. 15 = ±15%)
   fallbackPricePerKm?: number;    // used only when distance is known but rates are unset
