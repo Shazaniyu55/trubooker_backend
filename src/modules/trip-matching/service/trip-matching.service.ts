@@ -582,95 +582,7 @@ private async pushToUser(userId: string, title: string, body: string, data?: any
  * transaction/manager, and only touches PENDING requests so nobody is
  * approved or notified twice.
  */
-// async fulfillRequestsForTrip(
-//   args: { tripId: string; origin: string; destination: string; date: string },
-//   em: EntityManager,
-// ): Promise<number> {
-//   const { tripId, origin, destination, date } = args;
-//   if (!origin || !destination || !date) return 0;
 
-//   // Both sides must be ISO before comparison. Requests are normalised on
-//   // create; trips are not, so coerce here.
-//   const iso = (d: string) => {
-//     const t = String(d ?? '').trim();
-//     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-//     const m = t.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
-//     return m ? `${m[3]}-${m[2]}-${m[1]}` : t;
-//   };
-
-//   const tripDate = iso(date);
-//   const key = this.matchKey(origin, destination, tripDate);
-//   this.logger.debug(`fulfillRequestsForTrip: trip ${tripId} key=${key}`);
-
-//   // All requests still waiting. We compare keys in memory so date-format
-//   // differences never hide a match at the SQL layer.
-//   const pending = await em.find(TripRequest, {
-//     where: { status: TripRequestStatus.PENDING },
-//   });
-
-//   const matches = pending.filter(
-//     (r) =>
-//       this.matchKey(r.origin, r.destination, iso(r.requestedDate)) === key,
-//   );
-
-//   if (!matches.length) {
-//     this.logger.debug(
-//       `fulfillRequestsForTrip: no PENDING request matched key=${key} ` +
-//         `(scanned ${pending.length})`,
-//     );
-//     return 0;
-//   }
-
-//   for (const req of matches) {
-//     req.status = TripRequestStatus.APPROVED;
-//     req.linkedTripId = tripId;
-//     req.processedAt = new Date();
-//     await em.save(TripRequest, req);
-
-//     // Close the pool this request was sitting in, if any.
-//     if (req.poolId) {
-//       await em.update(
-//         TripRequestPool,
-//         { id: req.poolId },
-//         {
-//           status: TripPoolStatus.CLAIMED,
-//           linkedTripId: tripId,
-//           claimedAt: new Date(),
-//         },
-//       );
-//     }
-
-//     // Notify the passenger (per-passenger best-effort — one failure must
-//     // not stop the others).
-//     try {
-//       await this.notificationService.notify({
-//         userId: req.requesterUserId,
-//         title: 'Your trip request was approved',
-//         body:
-//           `A driver created a trip for ${req.origin} → ${req.destination} ` +
-//           `on ${req.requestedDate}. Tap to book your seat.`,
-//         type: NotificationType.TRIP_REQUEST_APPROVED,
-//         data: {
-//           tripRequestId: req.id,
-//           tripId,
-//           origin: req.origin,
-//           destination: req.destination,
-//           requestedDate: req.requestedDate,
-//         },
-//       });
-//     } catch (err) {
-//       this.logger.warn(
-//         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
-//       );
-//     }
-//     await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
-//   }
-
-//   this.logger.log(
-//     `Trip ${tripId} auto-approved ${matches.length} request(s).`,
-//   );
-//   return matches.length;
-// }
 
 async fulfillRequestsForTrip(
   args: {
@@ -749,6 +661,11 @@ async fulfillRequestsForTrip(
       );
     }
 
+     const title = 'Your trip request was approved';
+     const body =
+      `A driver created a trip for ${req.origin} → ${req.destination} ` +
+      `on ${req.requestedDate}. Tap to book your seat.`;
+
     // Notify the passenger (per-passenger best-effort — one failure must
     // not stop the others).
     try {
@@ -772,7 +689,15 @@ async fulfillRequestsForTrip(
         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
       );
     }
-    await this.pushToUser(req.requesterUserId, 'Your trip request was approved', `Your trip request for ${req.origin} → ${req.destination} has been approved.`);
+    await this.pushToUser(req.requesterUserId, title, body, {
+        tripRequestId: req.id,
+        tripId,
+        origin: req.origin,
+        destination: req.destination,
+        requestedDate: req.requestedDate,
+      });
+    
+  
   }
 
   this.logger.log(
