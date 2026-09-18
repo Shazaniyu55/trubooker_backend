@@ -10,6 +10,7 @@ import { Trip } from '@modules/core/entities/trip.entity';
 import { Escrow } from '@modules/core/entities/escro.entity';
 import { Payout } from '@modules/core/entities/payout.entity';
 import { Booking } from '@modules/core/entities/booking.entity';
+import { DeleteUserDto } from '@modules/auth/dtos/deleteuser.dto';
 
 @Injectable()
 export class DriverRepository extends Repository<Driver> {
@@ -87,6 +88,55 @@ export class DriverRepository extends Repository<Driver> {
 }
 
 
+
+/**
+ * Delete (soft-delete) a driver's account.
+ *
+ * Unlike a passenger, a driver disappearing mid-trip strands whoever booked
+ * a seat with them — so this refuses to delete while the driver has any
+ * trip that's still PENDING/ACTIVE/STARTED, and while they're sitting on
+ * an un-withdrawn wallet balance (make them cash out first, or an admin
+ * has to intervene).
+ */
+async deleteUser(
+  id: string,
+  data: DeleteUserDto,
+  entityManager?: EntityManager,
+): Promise<User> {
+  const manager = entityManager || this.entityManager;
+ 
+  const driver = await manager.findOne(Driver, { where: { userId: id } });
+  if (!driver) throw new NotFoundException('Driver profile not found');
+ 
+  const openTrip = await manager.findOne(Trip, {
+    where: [
+      { driverId: driver.id, status: TripStatus.PENDING },
+      { driverId: driver.id, status: TripStatus.ACTIVE },
+      { driverId: driver.id, status: TripStatus.STARTED },
+    ],
+  });
+  if (openTrip) {
+    throw new BadRequestException(
+      'You have an upcoming or in-progress trip. Cancel or complete it before deleting your account.',
+    );
+  }
+ 
+  if (Number(driver.currentBalance) > 0) {
+    throw new BadRequestException(
+      'You have an outstanding wallet balance. Withdraw it before deleting your account.',
+    );
+  }
+ 
+  const user = await manager.findOne(User, { where: { id } });
+  if (!user) throw new NotFoundException('User not found');
+ 
+  if (data && Object.keys(data).length > 0) {
+    await manager.update(User, id, data);
+  }
+ 
+  await manager.softDelete(User, id);
+  return manager.findOne(User, { where: { id }, withDeleted: true });
+}
 
 
     async getProfile(userId: string) {

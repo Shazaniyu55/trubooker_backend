@@ -56,6 +56,7 @@ import { GetDriverTripStatusUsecase } from './usecases/getdrivertripstatus.useca
 import { GetDriverDashboardUsecase } from './usecases/getdriverdashboard.usecase';
 import { GetDriverProfileUsecase } from './usecases/getdriverprofile.usecase';
 import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module';
+import { DeleteDriverAccountUsecase } from './usecases/deleteacct.usecase';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -115,7 +116,7 @@ import { TripMatchingModule } from '@modules/trip-matching/trip-matching.module'
     GetMyTripUsecase,
     GetVehicleTypeUsecase,
     CloseBookingsUsecase,
-
+    DeleteDriverAccountUsecase,
 
     // Shared Dependencies
     RandomnessUtil,

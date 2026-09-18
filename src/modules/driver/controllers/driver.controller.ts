@@ -57,6 +57,8 @@ import { GetDriverProfileUsecase } from '../usecases/getdriverprofile.usecase';
 import { PayoutService } from '../services/payout.service';
 import { WalletTxQueryDto } from '../dtos/wallet-query.dto';
 import { NotificationService } from '@modules/notification/services/notification.service';
+import { DeleteDriverAccountUsecase } from '../usecases/deleteacct.usecase';
+import { DeleteUserDto } from '../dtos/deleteuser.dto';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -93,6 +95,7 @@ export class DriverTripController {
     private readonly getDriverProfileUsecase:GetDriverProfileUsecase,
     private readonly payoutService: PayoutService,
         private readonly notificationService: NotificationService,
+         private readonly deleteDriverAccountUsecase: DeleteDriverAccountUsecase,
     
   ) {}
 
@@ -124,6 +127,17 @@ initiatePayout(@AuthUser() user: any, @Body() dto: InitiatePayoutDto) {
 @ApiOperation({ summary: 'Fetch supported bank list' })
 getBanks() {
   return this.payoutService.getBankList();
+}
+
+@DriverOnly()
+@Delete('delete-acct')
+@ApiOperation({
+  summary: 'Delete my driver account',
+  description:
+    'Soft-deletes my account. Refused while I have an upcoming/active/in-progress trip, or an un-withdrawn wallet balance.',
+})
+deleteAccount(@AuthUser() user: any, @Body() dto: DeleteUserDto) {
+  return this.broker.runUsecases([this.deleteDriverAccountUsecase], { id: user.sub, dto });
 }
 
 @DriverOnly()

@@ -17,6 +17,7 @@ import { RedisCacheService } from '@modules/cache/redis-cache.service';
 import { CACHE_KEYS, CACHE_TTL } from '@modules/cache/redis-cache.constants';
 import { ExpoService } from '@modules/notification/services/expo.service';
 import { TripMatchingService } from '@modules/trip-matching/service/trip-matching.service';
+import { DeleteUserDto } from '../dtos/deleteuser.dto';
  
 const PLATFORM_FEE_RATE = parseFloat(process.env.PLATFORM_FEE_RATE ?? '7'); // 5%
  
@@ -201,7 +202,12 @@ try {
      
         //return savedTrip;
  
-  
+  /**
+   * Delete (soft-delete) the calling driver's account.
+   */
+  async deleteAccount(userId: string, dto: DeleteUserDto, em?: EntityManager) {
+    return this.driverRepository.deleteUser(userId, dto, em);
+  }
  
    async updateProfile(
       id: string,
