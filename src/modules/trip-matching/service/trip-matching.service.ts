@@ -27,11 +27,15 @@ import {
   isInterStateTrip,
   resolveNigeriaState,
   districtToken,
+  isDefinitelyInterState,
+  locationInDistrict,
+  locationInState,
 } from '@shared/utils/geo/nigeria-geo.util';
 import { BoardQueryDto, ClaimPoolDto } from '../dtos/trip-matching.dto';
 import { ExpoService } from '@modules/notification/services/expo.service';
 import { User } from '@modules/core/entities/user.entity';
 import { SystemSettingService } from '@modules/system/service/system.service';
+
 
 /** Fallback lead times (hours), used only when the admin hasn't set one. */
 const INTRA_STATE_WINDOW_HOURS = 12; // within a state
@@ -669,17 +673,158 @@ private async pushToUser(userId: string, title: string, body: string, data?: any
  */
 
 
+// async fulfillRequestsForTrip(
+//   args: {
+//     tripId: string;
+//     origin: string;
+//     destination: string;
+//     date: string;
+//     departureTime?: string | null;
+//   },
+//   em: EntityManager,
+// ): Promise<number> {
+//   const { tripId, origin, destination, date, departureTime } = args;
+//   if (!origin || !destination || !date) return 0;
+
+//   // Both sides must be ISO before comparison. Requests are normalised on
+//   // create; trips are not, so coerce here.
+//   const iso = (d: string) => {
+//     const t = String(d ?? '').trim();
+//     if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+//     const m = t.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+//     return m ? `${m[3]}-${m[2]}-${m[1]}` : t;
+//   };
+
+//   const tripDate = iso(date);
+//   // Match on district + date. The driver's exact "Market Road (Ekpoma)" and the
+//   // passenger's "GT Bank Ekpoma" both resolve to the Ekpoma district token.
+//   const routeKey = this.routeDateKey(origin, destination, tripDate);
+//   // The slot the trip's departure time falls in (null when it can't be parsed).
+//   const tripSlot = this.slotForClock(departureTime);
+//   this.logger.debug(
+//     `fulfillRequestsForTrip: trip ${tripId} routeKey=${routeKey} slot=${tripSlot ?? 'any'}`,
+//   );
+
+//   // All requests still waiting. We compare keys in memory so date-format
+//   // differences never hide a match at the SQL layer.
+//   const pending = await em.find(TripRequest, {
+//     where: { status: TripRequestStatus.PENDING },
+//   });
+
+//   const matches = pending.filter((r) => {
+//     if (this.routeDateKey(r.origin, r.destination, iso(r.requestedDate)) !== routeKey) {
+//       return false;
+//     }
+//     // Same district + date. Now honour the time-of-day: only pull in passengers
+//     // whose slot matches the trip's. If the trip time is unknown, or a passenger
+//     // stated no slot, treat it as compatible rather than dropping the match.
+//     if (!tripSlot) return true;
+//     const reqSlot = this.requestSlot(r);
+//     return reqSlot === 'any' || reqSlot === tripSlot;
+//   });
+
+//   if (!matches.length) {
+//     this.logger.debug(
+//       `fulfillRequestsForTrip: no PENDING request matched routeKey=${routeKey} ` +
+//         `slot=${tripSlot ?? 'any'} (scanned ${pending.length})`,
+//     );
+//     return 0;
+//   }
+
+//   for (const req of matches) {
+//     req.status = TripRequestStatus.APPROVED;
+//     req.linkedTripId = tripId;
+//     req.processedAt = new Date();
+//     await em.save(TripRequest, req);
+
+//     // Close the pool this request was sitting in, if any.
+//     if (req.poolId) {
+//       await em.update(
+//         TripRequestPool,
+//         { id: req.poolId },
+//         {
+//           status: TripPoolStatus.CLAIMED,
+//           linkedTripId: tripId,
+//           claimedAt: new Date(),
+//         },
+//       );
+//     }
+
+//      const title = 'Your trip request was approved';
+//      const body =
+//       `A driver created a trip for ${req.origin} → ${req.destination} ` +
+//       `on ${req.requestedDate}. Tap to book your seat.`;
+
+//     // Notify the passenger (per-passenger best-effort — one failure must
+//     // not stop the others).
+//     try {
+//       await this.notificationService.notify({
+//         userId: req.requesterUserId,
+//         title: 'Your trip request was approved',
+//         body:
+//           `A driver created a trip for ${req.origin} → ${req.destination} ` +
+//           `on ${req.requestedDate}. Tap to book your seat.`,
+//         type: NotificationType.TRIP_REQUEST_APPROVED,
+//         data: {
+//           tripRequestId: req.id,
+//           tripId,
+//           origin: req.origin,
+//           destination: req.destination,
+//           requestedDate: req.requestedDate,
+//         },
+//       });
+//     } catch (err) {
+//       this.logger.warn(
+//         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
+//       );
+//     }
+//     await this.pushToUser(req.requesterUserId, title, body, {
+//         tripRequestId: req.id,
+//         tripId,
+//         origin: req.origin,
+//         destination: req.destination,
+//         requestedDate: req.requestedDate,
+//       });
+    
+  
+//   }
+
+//   this.logger.log(
+//     `Trip ${tripId} auto-approved ${matches.length} request(s).`,
+//   );
+//   return matches.length;
+// }
+
+  /**
+ * Called when a driver creates a trip. Finds the PENDING passenger requests
+ * this trip serves and tells those passengers.
+ *
+ * A request is served when, on the same date (and compatible time slot):
+ *   1. DEPARTURE is the same town / district as the passenger asked for —
+ *      a Warri departure never serves an Agbor passenger; and
+ *   2. ARRIVAL is either
+ *        • the same district            → 'exact'  (request approved + linked,
+ *                                          its pool closed), or
+ *        • (INTER-STATE requests only) a different district inside the
+ *          requested destination state  → 'state'  (passenger is notified and
+ *          can book, but their request stays open for an exact trip).
+ *
+ * Best-effort, runs in the caller's transaction/manager, and only touches
+ * PENDING requests.
+ */
 async fulfillRequestsForTrip(
   args: {
     tripId: string;
     origin: string;
     destination: string;
+    /** Arrival state as the driver entered it (arrivalDestination[0].state). */
+    destinationState?: string | null;
     date: string;
     departureTime?: string | null;
   },
   em: EntityManager,
 ): Promise<number> {
-  const { tripId, origin, destination, date, departureTime } = args;
+  const { tripId, origin, destination, destinationState, date, departureTime } = args;
   if (!origin || !destination || !date) return 0;
 
   // Both sides must be ISO before comparison. Requests are normalised on
@@ -692,105 +837,151 @@ async fulfillRequestsForTrip(
   };
 
   const tripDate = iso(date);
-  // Match on district + date. The driver's exact "Market Road (Ekpoma)" and the
-  // passenger's "GT Bank Ekpoma" both resolve to the Ekpoma district token.
-  const routeKey = this.routeDateKey(origin, destination, tripDate);
+  // Everything that names the trip's arrival (place + state) in one string.
+  const tripArrival = [destination, destinationState].filter(Boolean).join(', ');
+  // Short label for messages: "Ikorodu" out of "Ikorodu, Ikorodu Rd, Lagos".
+  const arrivalLabel = String(destination).split(',')[0].trim() || destination;
   // The slot the trip's departure time falls in (null when it can't be parsed).
   const tripSlot = this.slotForClock(departureTime);
   this.logger.debug(
-    `fulfillRequestsForTrip: trip ${tripId} routeKey=${routeKey} slot=${tripSlot ?? 'any'}`,
+    `fulfillRequestsForTrip: trip ${tripId} ${origin} → ${tripArrival} on ${tripDate} slot=${tripSlot ?? 'any'}`,
   );
 
-  // All requests still waiting. We compare keys in memory so date-format
+  // All requests still waiting. We compare in memory so date-format
   // differences never hide a match at the SQL layer.
   const pending = await em.find(TripRequest, {
     where: { status: TripRequestStatus.PENDING },
   });
 
-  const matches = pending.filter((r) => {
-    if (this.routeDateKey(r.origin, r.destination, iso(r.requestedDate)) !== routeKey) {
-      return false;
+  const matches: { req: TripRequest; type: 'exact' | 'state' }[] = [];
+  for (const r of pending) {
+    if (iso(r.requestedDate) !== tripDate) continue;
+
+    const type = this.tripServesRequest(origin, tripArrival, r);
+    if (!type) continue;
+
+    // Honour the time-of-day: only pull in passengers whose slot matches the
+    // trip's. If the trip time is unknown, or a passenger stated no slot,
+    // treat it as compatible rather than dropping the match.
+    if (tripSlot) {
+      const reqSlot = this.requestSlot(r);
+      if (!(reqSlot === 'any' || reqSlot === tripSlot)) continue;
     }
-    // Same district + date. Now honour the time-of-day: only pull in passengers
-    // whose slot matches the trip's. If the trip time is unknown, or a passenger
-    // stated no slot, treat it as compatible rather than dropping the match.
-    if (!tripSlot) return true;
-    const reqSlot = this.requestSlot(r);
-    return reqSlot === 'any' || reqSlot === tripSlot;
-  });
+
+    matches.push({ req: r, type });
+  }
 
   if (!matches.length) {
     this.logger.debug(
-      `fulfillRequestsForTrip: no PENDING request matched routeKey=${routeKey} ` +
-        `slot=${tripSlot ?? 'any'} (scanned ${pending.length})`,
+      `fulfillRequestsForTrip: no PENDING request matched trip ${tripId} ` +
+        `(scanned ${pending.length})`,
     );
     return 0;
   }
 
-  for (const req of matches) {
-    req.status = TripRequestStatus.APPROVED;
-    req.linkedTripId = tripId;
-    req.processedAt = new Date();
-    await em.save(TripRequest, req);
+  for (const { req, type } of matches) {
+    // Only an EXACT match consumes the request. A same-state match just tells
+    // the passenger — their request stays PENDING (and its pool open) so a
+    // driver going to their exact destination can still pick it up.
+    if (type === 'exact') {
+      req.status = TripRequestStatus.APPROVED;
+      req.linkedTripId = tripId;
+      req.processedAt = new Date();
+      await em.save(TripRequest, req);
 
-    // Close the pool this request was sitting in, if any.
-    if (req.poolId) {
-      await em.update(
-        TripRequestPool,
-        { id: req.poolId },
-        {
-          status: TripPoolStatus.CLAIMED,
-          linkedTripId: tripId,
-          claimedAt: new Date(),
-        },
-      );
+      // Close the pool this request was sitting in, if any.
+      if (req.poolId) {
+        await em.update(
+          TripRequestPool,
+          { id: req.poolId },
+          {
+            status: TripPoolStatus.CLAIMED,
+            linkedTripId: tripId,
+            claimedAt: new Date(),
+          },
+        );
+      }
     }
 
-     const title = 'Your trip request was approved';
-     const body =
-      `A driver created a trip for ${req.origin} → ${req.destination} ` +
-      `on ${req.requestedDate}. Tap to book your seat.`;
+    const title =
+      type === 'exact'
+        ? 'Your trip request was approved'
+        : 'A trip is available for your route';
+    const body =
+      type === 'exact'
+        ? `A driver created a trip for ${req.origin} → ${req.destination} ` +
+          `on ${req.requestedDate}. Tap to book your seat.`
+        : `A driver is leaving ${req.origin} for ${arrivalLabel} on ${req.requestedDate}. ` +
+          `It's in the same state as ${req.destination}. Tap to view and book a seat.`;
+    const data = {
+      tripRequestId: req.id,
+      tripId,
+      origin: req.origin,
+      destination: req.destination,
+      requestedDate: req.requestedDate,
+      matchType: type,
+      tripDestination: arrivalLabel,
+    };
 
     // Notify the passenger (per-passenger best-effort — one failure must
     // not stop the others).
     try {
       await this.notificationService.notify({
         userId: req.requesterUserId,
-        title: 'Your trip request was approved',
-        body:
-          `A driver created a trip for ${req.origin} → ${req.destination} ` +
-          `on ${req.requestedDate}. Tap to book your seat.`,
+        title,
+        body,
         type: NotificationType.TRIP_REQUEST_APPROVED,
-        data: {
-          tripRequestId: req.id,
-          tripId,
-          origin: req.origin,
-          destination: req.destination,
-          requestedDate: req.requestedDate,
-        },
+        data,
       });
     } catch (err) {
       this.logger.warn(
         `Failed to notify passenger ${req.requesterUserId}: ${err?.message}`,
       );
     }
-    await this.pushToUser(req.requesterUserId, title, body, {
-        tripRequestId: req.id,
-        tripId,
-        origin: req.origin,
-        destination: req.destination,
-        requestedDate: req.requestedDate,
-      });
-    
-  
+    await this.pushToUser(req.requesterUserId, title, body, data);
   }
 
+  const exactCount = matches.filter((m) => m.type === 'exact').length;
   this.logger.log(
-    `Trip ${tripId} auto-approved ${matches.length} request(s).`,
+    `Trip ${tripId}: ${exactCount} request(s) auto-approved, ` +
+      `${matches.length - exactCount} notified (same destination state).`,
   );
   return matches.length;
 }
 
+/**
+ * Does a trip leaving `tripOrigin` and arriving at `tripArrival` serve `req`?
+ *   'exact' → same departure town AND same arrival district
+ *   'state' → same departure town; different arrival district inside the
+ *             requested destination state — INTER-STATE requests only
+ *   null    → no
+ *
+ * Examples (passenger asks Agbor, Delta → Ikeja, Lagos):
+ *   Agbor → Ikeja        exact
+ *   Agbor → Ikorodu/Lekki  state   (still Lagos)
+ *   Warri → Ikeja        null      (departure differs)
+ *   Agbor → Abuja        null      (different state)
+ * An intra-state request (Benin City → Ekpoma) never gets 'state': a trip to
+ * Uromi is not a trip to Ekpoma.
+ */
+private tripServesRequest(
+  tripOrigin: string,
+  tripArrival: string,
+  req: TripRequest,
+): 'exact' | 'state' | null {
+  // 1. Departure must be the same town / district.
+  if (!locationInDistrict(tripOrigin, req.origin)) return null;
+
+  // 2a. Same arrival district.
+  if (locationInDistrict(tripArrival, req.destination)) return 'exact';
+
+  // 2b. Inter-state request: any arrival inside the requested state.
+  if (!isDefinitelyInterState(req.origin, req.destination)) return null;
+  const wantedState = resolveNigeriaState(req.destination);
+  if (wantedState && locationInState(tripArrival, wantedState)) return 'state';
+
+  return null;
+}
   /** `origin|destination|date`, each side normalised to a stable token. */
 
 

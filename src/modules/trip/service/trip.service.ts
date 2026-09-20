@@ -127,46 +127,100 @@ async activateTrip(userId: string, tripId: string): Promise<Trip> {
   }
 
 
-  async searchTripsWithAlternatives(query: SearchTripsDto) {
+    async searchTripsWithAlternatives(query: SearchTripsDto) {
+    // Exact search: SAME departure district, SAME arrival district.
     const result: any = await this.tripRepository.searchTrips(query);
     const exactCount = result?.meta?.totalRecords ?? 0;
- 
-    // Only hunt for alternatives when the caller asked for a SPECIFIC date and
-    // nothing matched it. An undated search already returns the full list.
-    if (query.date && exactCount === 0) {
-      const alternatives = await this.tripRepository.findAlternativeTrips({
+
+    if (exactCount === 0) {
+      // Same route on another day (next 7 days) — only when a date was asked for.
+      const alternatives = query.date
+        ? await this.tripRepository.findAlternativeTrips({
+            origin: query.origin,
+            destination: query.destination,
+            date: query.date,
+            seats: query.seats,
+            windowDays: 7,
+            limit: query.limit ?? 10,
+          })
+        : [];
+
+      // INTER-STATE routes only: same departure town, different arrival
+      // district inside the same destination state (Agbor → Ikorodu when the
+      // passenger asked for Agbor → Ikeja). Always [] for intra-state routes.
+      const stateAlternatives = await this.tripRepository.findSameStateAlternativeTrips({
         origin: query.origin,
         destination: query.destination,
         date: query.date,
         seats: query.seats,
-        windowDays: 7,          // look up to a week ahead
         limit: query.limit ?? 10,
       });
 
-      // When the passenger has a route but no matching trip, show what a fair
-      // fare would look like for 1–4 seats. This lets them decide whether to
-      // request a trip knowing roughly what they'll spend per seat.
+      // Fare hint so the passenger knows roughly what a requested trip costs.
       const estimatedFares = await this.buildFareEstimate(query.origin, query.destination);
 
       return {
         ...result,
         exactDateAvailable: false,
         alternatives,
+        stateAlternatives,
         estimatedFares,
-        // No exact match AND no nearby trips → tell the app to show the
-        // "Request a trip / get notified" button.
-        canRequestTrip: alternatives.length === 0,
+        // Nothing matched the passenger's exact route, so they can always
+        // request it — even when we also show nearby alternatives.
+        canRequestTrip: true,
       };
     }
- 
+
     return {
       ...result,
       exactDateAvailable: true,
       alternatives: [],
+      stateAlternatives: [],
       estimatedFares: null,
       canRequestTrip: false,
     };
   }
+  
+  // async searchTripsWithAlternatives(query: SearchTripsDto) {
+  //   const result: any = await this.tripRepository.searchTrips(query);
+  //   const exactCount = result?.meta?.totalRecords ?? 0;
+ 
+  //   // Only hunt for alternatives when the caller asked for a SPECIFIC date and
+  //   // nothing matched it. An undated search already returns the full list.
+  //   if (query.date && exactCount === 0) {
+  //     const alternatives = await this.tripRepository.findAlternativeTrips({
+  //       origin: query.origin,
+  //       destination: query.destination,
+  //       date: query.date,
+  //       seats: query.seats,
+  //       windowDays: 7,          // look up to a week ahead
+  //       limit: query.limit ?? 10,
+  //     });
+
+  //     // When the passenger has a route but no matching trip, show what a fair
+  //     // fare would look like for 1–4 seats. This lets them decide whether to
+  //     // request a trip knowing roughly what they'll spend per seat.
+  //     const estimatedFares = await this.buildFareEstimate(query.origin, query.destination);
+
+  //     return {
+  //       ...result,
+  //       exactDateAvailable: false,
+  //       alternatives,
+  //       estimatedFares,
+  //       // No exact match AND no nearby trips → tell the app to show the
+  //       // "Request a trip / get notified" button.
+  //       canRequestTrip: alternatives.length === 0,
+  //     };
+  //   }
+ 
+  //   return {
+  //     ...result,
+  //     exactDateAvailable: true,
+  //     alternatives: [],
+  //     estimatedFares: null,
+  //     canRequestTrip: false,
+  //   };
+  // }
 
   /** Best-effort per-seat fare estimate (1–4 seats). Never blocks a search. */
   private async buildFareEstimate(origin?: string, destination?: string) {

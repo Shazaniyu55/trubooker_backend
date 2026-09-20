@@ -169,28 +169,39 @@ await this.notifiyService.notify({
 //send push
 
 try {
-          // await this.matching.fulfillRequestsForTrip(
+
+             const arrival = dto.arrivalDestination?.[0];
+           await this.matching.fulfillRequestsForTrip(
+            {
+              tripId: savedTrip.id,
+              origin: dto.departureLocation,
+              // place name + address, so the district can be worked out even
+              // when the driver only typed a terminal name
+              destination:
+                [arrival?.name, arrival?.address].filter(Boolean).join(', ') ||
+                dto.dropOffStation,
+              // arrival STATE — lets an inter-state passenger be notified for
+              // a different district in the same state (Agbor → Ikorodu when
+              // they asked for Agbor → Ikeja)
+              destinationState: arrival?.state,
+              date: dto.departureDate,
+              departureTime: dto.departureTime,
+            },
+            manager,
+          );
+         
+
+          //  await this.matching.fulfillRequestsForTrip(
           //   {
           //     tripId: savedTrip.id,
           //     origin: dto.departureLocation,
           //     destination:
           //       dto.arrivalDestination?.[0]?.name ?? dto.dropOffStation,
           //     date: dto.departureDate,
+          //     departureTime: dto.departureTime,
           //   },
           //   manager,
           // );
-
-           await this.matching.fulfillRequestsForTrip(
-            {
-              tripId: savedTrip.id,
-              origin: dto.departureLocation,
-              destination:
-                dto.arrivalDestination?.[0]?.name ?? dto.dropOffStation,
-              date: dto.departureDate,
-              departureTime: dto.departureTime,
-            },
-            manager,
-          );
         } catch (err) {
           this.logger.warn(
             `Auto-approve on trip create failed: ${err?.message}`,
