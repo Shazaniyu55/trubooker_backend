@@ -227,98 +227,7 @@ try {
   /**
    * Update trip details (only PENDING trips)
    */
-  // async updateTrip(userId: string, tripId: string, dto: UpdateDriverTripDto, em?: EntityManager): Promise<Trip> {
-  //   this.logger.debug(`Updating trip ${tripId} for driver ${userId}`);
-  //   const manager = em ?? this.tripRepo.manager;
-
-  //   // Validate driver and ownership
-  //   const trip = await this.getTripOwnedByDriver(userId, tripId);
-
-  //   // Only allow updates on PENDING trips
-  //   if (trip.status !== TripStatus.PENDING) {
-  //     throw new BadRequestException('Can only update trips in PENDING status');
-  //   }
-
-  //   // Check for confirmed bookings
-  //   const confirmedCount = await this.bookingRepo.count({
-  //     where: { tripId, status: BookingStatus.CONFIRMED },
-  //   });
-
-  //   if (confirmedCount > 0) {
-  //     throw new BadRequestException('Cannot edit a trip that already has confirmed bookings');
-  //   }
-
-  //   // Validate update data
-  //   if (dto.departureTime) {
-  //     // Normalize "17:08" -> "17:08:00" so Postgres `time` always gets HH:mm:ss
-  //     dto.departureTime =
-  //       dto.departureTime.length === 5 ? `${dto.departureTime}:00` : dto.departureTime;
-  //   }
-
-  //   // Validate departure date+time whenever either is being changed
-  //   if (dto.departureDate || dto.departureTime) {
-  //     this.validateDepartureDateTime(
-  //       dto.departureDate ?? trip.departureDate,
-  //       dto.departureTime ?? trip.departureTime,
-  //     );
-  //   }
-
-  //   const newPrice = dto.price ?? dto.pricePerSeat;
-  //   if (newPrice !== undefined && (newPrice < 100 || newPrice > 50000)) {
-  //     throw new BadRequestException('Price per seat must be between 100 and 50000');
-  //   }
-
-  //   // Apply updates — map DTO fields to actual entity columns.
-  //   // IMPORTANT: departureTime stays a STRING ("HH:mm:ss"). Never wrap it in
-  //   // new Date() — new Date("17:08:00") is an Invalid Date, and TypeORM
-  //   // formats it as "aN:aN:aN" when saving a `time` column.
-  //   if (dto.departureDate) trip.departureDate = dto.departureDate;
-  //   if (dto.departureTime) trip.departureTime = dto.departureTime;
-  //   if (dto.departureLocation ?? dto.origin) trip.departureLocation = dto.departureLocation ?? dto.origin;
-  //   if (dto.departureLatlong) trip.departureLatlong = dto.departureLatlong;
-  //   if (dto.arrivalDate) trip.arrivalDate = dto.arrivalDate;
-  //   if (dto.arrivalTime) {
-  //     trip.arrivalTime = dto.arrivalTime.length === 5 ? `${dto.arrivalTime}:00` : dto.arrivalTime;
-  //   }
-  //   if (dto.arrivalDestination) {
-  //     trip.arrivalDestination = dto.arrivalDestination;
-  //     trip.state = dto.arrivalDestination?.[0]?.state ?? trip.state;
-  //   }
-  //   if (dto.pickStation) trip.pickStation = dto.pickStation;
-  //   if (dto.dropOffStation ?? dto.destination) trip.dropOffStation = dto.dropOffStation ?? dto.destination;
-  //   if (dto.busStop) trip.busStop = dto.busStop;
-  //   if (dto.busstopLatlong) trip.busstopLatlong = dto.busstopLatlong;
-  //   if (dto.tripSpecification) trip.tripSpecification = dto.tripSpecification;
-  //   if (dto.waypoints) trip.waypoints = dto.waypoints;
-  //   if (dto.state) trip.state = dto.state;
-  //   if (dto.description !== undefined) trip.description = dto.description;
-  //   if (dto.vehicleFeatures) trip.vehicleFeatures = dto.vehicleFeatures;
-  //   else if (dto.features) trip.vehicleFeatures = this.parseAmenities(dto.features);
-  //   if (dto.bookingClosingDate) trip.bookingClosingDate = dto.bookingClosingDate;
-  //   if (dto.bookingClosingTime) {
-  //     trip.bookingClosingTime =
-  //       dto.bookingClosingTime.length === 5 ? `${dto.bookingClosingTime}:00` : dto.bookingClosingTime;
-  //   }
-  //   if (newPrice !== undefined) trip.price = newPrice;
-  //   if (dto.vehicleId) trip.vehicleId = dto.vehicleId;
-  //   if (dto.metadata) trip.metadata = { ...trip.metadata, ...dto.metadata };
-
-  //   if (dto.totalSeats !== undefined) {
-  //     const booked = trip.bookedSeats ?? 0;
-  //     if (dto.totalSeats < booked) {
-  //       throw new BadRequestException(
-  //         `Total seats cannot be less than already booked seats (${booked})`,
-  //       );
-  //     }
-  //     trip.totalSeats = dto.totalSeats;
-  //     trip.availableSeats = dto.totalSeats - booked;
-  //   }
-    
-  //   const updated = await manager.save(Trip, trip);
-
-  //   this.logger.log(`Trip ${tripId} updated by driver ${userId}`);
-  //   return updated;
-  // }
+  
    async updateTrip(userId: string, tripId: string, dto: UpdateDriverTripDto, em?: EntityManager): Promise<Trip> {
     this.logger.debug(`Updating trip ${tripId} for driver ${userId}`);
     const manager = em ?? this.tripRepo.manager;
@@ -355,9 +264,14 @@ try {
       );
     }
 
+    // const newPrice = dto.price ?? dto.pricePerSeat;
+    // if (newPrice !== undefined && (newPrice < 100 || newPrice > 50000)) {
+    //   throw new BadRequestException('Price per seat must be between 100 and 50000');
+    // }
+
     const newPrice = dto.price ?? dto.pricePerSeat;
-    if (newPrice !== undefined && (newPrice < 100 || newPrice > 50000)) {
-      throw new BadRequestException('Price per seat must be between 100 and 50000');
+    if (newPrice !== undefined && newPrice < 100) {
+      throw new BadRequestException('Price per seat must be at least 100');
     }
 
     // Apply updates — map DTO fields to actual entity columns.
@@ -703,8 +617,11 @@ async getDriverDashboard(userId: string, query: { page?: number; limit?: number 
   }
  
   // Price (min 100, max 50000)
-  if (dto.price < 100 || dto.price > 50000) {
-    throw new BadRequestException('Price per seat must be between 100 and 50000');
+  // if (dto.price < 100 || dto.price > 50000) {
+  //   throw new BadRequestException('Price per seat must be between 100 and 50000');
+  // }
+    if (dto.price < 100) {
+    throw new BadRequestException('Price per seat must be at least 100');
   }
  
   // Seats
