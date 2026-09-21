@@ -33,6 +33,14 @@ export class TripRequest extends BaseEntity {
   // ── What they want ─────────────────────────────────────────────────────
   @Column({ type: 'varchar' })
   origin: string;
+    @Column({ type: 'varchar', nullable: true })
+  originState: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  originLga: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  originCity: string | null;
 
   @Column({ type: 'varchar' })
   destination: string;

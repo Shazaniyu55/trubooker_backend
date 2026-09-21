@@ -9,6 +9,7 @@ import {
   DeclineTripRequestDto,
   TripRequestListQueryDto,
 } from '../dtos/trip-request.dto';
+import { GeocodingService } from '@modules/geocoding/geocoding.service';
 
 @Injectable()
 export class TripRequestService {
@@ -17,11 +18,16 @@ export class TripRequestService {
   constructor(
     private readonly repo: TripRequestRepository,
     private readonly matching: TripMatchingService,
+        private readonly geocoding: GeocodingService,
   ) {}
 
   // ── Passenger ──────────────────────────────────────────────────────────
   async createRequest(userId: string, dto: CreateTripRequestDto, em?: EntityManager) {
-    const saved = await this.repo.createRequest(userId, dto, em);
+     const originPlace = await this.geocoding
+      .resolvePlace({ address: dto.origin })
+      .catch(() => null);
+
+    const saved = await this.repo.createRequest(userId, dto, em, originPlace);
 
     // Pool the request automatically, in the same transaction, the moment it's
     // created — no admin approval, no waiting for the next matching cron tick.

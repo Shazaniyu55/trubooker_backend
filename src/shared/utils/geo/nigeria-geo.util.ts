@@ -18,6 +18,37 @@ const PLACE_NOISE_WORDS = new Set([
   'motor', 'market', 'estate', 'expressway', 'highway',
 ]);
 
+/** State NAMES a location explicitly mentions (whole word). */
+function statesNamed(location?: string | null): NigeriaState[] {
+  const text = String(location ?? '').toLowerCase();
+  return NIGERIA_STATES.filter((s) => containsPhrase(text, s.toLowerCase()));
+}
+
+
+/**
+ * Landmark aliases such as "ring road" or "oba market" exist in many cities, so
+ * an address that matched ONLY through one of them (its town name is absent)
+ * while naming a DIFFERENT state ("Ring Road, Ibadan, Oyo") is not in the
+ * passenger's district. Returns what the filter needs to enforce that, or null
+ * when there is nothing to guard (no district, or no single state named).
+ */
+export function districtStateGuard(
+  wanted?: string | null,
+): { strong: string[]; wantedState: string; others: string[] } | null {
+  const district = resolveSpecificDistrict(wanted);
+  if (!district) return null;
+
+  const named = statesNamed(wanted);
+  if (named.length !== 1) return null;
+
+  const c = district.toLowerCase();
+  // Aliases that ARE the town's own name ("benin", "benin city", "ekpoma").
+  const strong = aliasesForDistrict(district).filter((t) => t.includes(c) || c.includes(t));
+  const others = NIGERIA_STATES.filter((s) => s !== named[0]).map((s) => s.toLowerCase());
+  return { strong, wantedState: named[0].toLowerCase(), others };
+}
+
+/** Is `target` located in the district named by `wanted`? (JS twin of the SQL filter.) */
 
 
 
@@ -170,13 +201,23 @@ export function districtSearchTerms(
 }
 
 /** Is `target` located in the district named by `wanted`? (JS twin of the SQL filter.) */
+/** Is `target` located in the district named by `wanted`? (JS twin of the SQL filter.) */
 export function locationInDistrict(target?: string | null, wanted?: string | null): boolean {
   const { mode, terms } = districtSearchTerms(wanted);
   if (!terms.length) return false;
   const text = String(target ?? '').toLowerCase();
-  return mode === 'any'
-    ? terms.some((t) => containsPhrase(text, t))
-    : terms.every((t) => containsPhrase(text, t));
+
+  if (mode === 'all') return terms.every((t) => containsPhrase(text, t));
+
+  if (!terms.some((t) => containsPhrase(text, t))) return false;
+
+  // Matched via a district alias — reject a landmark-only match that names another state.
+  const guard = districtStateGuard(wanted);
+  if (guard && !guard.strong.some((t) => containsPhrase(text, t))) {
+    const named = statesNamed(target);
+    if (named.length && !named.some((s) => s.toLowerCase() === guard.wantedState)) return false;
+  }
+  return true;
 }
 
 /** Is `target` located anywhere inside `state`? */

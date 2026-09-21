@@ -35,7 +35,11 @@ import { BoardQueryDto, ClaimPoolDto } from '../dtos/trip-matching.dto';
 import { ExpoService } from '@modules/notification/services/expo.service';
 import { User } from '@modules/core/entities/user.entity';
 import { SystemSettingService } from '@modules/system/service/system.service';
-
+import {
+  ResolvedPlace,
+  compareDeparture,
+  placeFromColumns,
+} from '@shared/utils/geo/place.util';
 
 /** Fallback lead times (hours), used only when the admin hasn't set one. */
 const INTRA_STATE_WINDOW_HOURS = 12; // within a state
@@ -819,12 +823,13 @@ async fulfillRequestsForTrip(
     destination: string;
     /** Arrival state as the driver entered it (arrivalDestination[0].state). */
     destinationState?: string | null;
+    originPlace?: ResolvedPlace | null;
     date: string;
     departureTime?: string | null;
   },
   em: EntityManager,
 ): Promise<number> {
-  const { tripId, origin, destination, destinationState, date, departureTime } = args;
+  const { tripId, origin, destination, originPlace, destinationState, date, departureTime } = args;
   if (!origin || !destination || !date) return 0;
 
   // Both sides must be ISO before comparison. Requests are normalised on
@@ -857,7 +862,7 @@ async fulfillRequestsForTrip(
   for (const r of pending) {
     if (iso(r.requestedDate) !== tripDate) continue;
 
-    const type = this.tripServesRequest(origin, tripArrival, r);
+    const type = this.tripServesRequest(origin, tripArrival, r, originPlace);
     if (!type) continue;
 
     // Honour the time-of-day: only pull in passengers whose slot matches the
@@ -964,13 +969,42 @@ async fulfillRequestsForTrip(
  * An intra-state request (Benin City → Ekpoma) never gets 'state': a trip to
  * Uromi is not a trip to Ekpoma.
  */
+// private tripServesRequest(
+//   tripOrigin: string,
+//   tripArrival: string,
+//   req: TripRequest,
+// ): 'exact' | 'state' | null {
+//   // 1. Departure must be the same town / district.
+//   if (!locationInDistrict(tripOrigin, req.origin)) return null;
+
+//   // 2a. Same arrival district.
+//   if (locationInDistrict(tripArrival, req.destination)) return 'exact';
+
+//   // 2b. Inter-state request: any arrival inside the requested state.
+//   if (!isDefinitelyInterState(req.origin, req.destination)) return null;
+//   const wantedState = resolveNigeriaState(req.destination);
+//   if (wantedState && locationInState(tripArrival, wantedState)) return 'state';
+
+//   return null;
+// }
+
+
 private tripServesRequest(
   tripOrigin: string,
   tripArrival: string,
   req: TripRequest,
+  tripPlace?: ResolvedPlace | null,
 ): 'exact' | 'state' | null {
   // 1. Departure must be the same town / district.
-  if (!locationInDistrict(tripOrigin, req.origin)) return null;
+  //    Prefer the resolved places: same city or same LGA → yes; different
+  //    state, or city AND LGA both differ → no. When either side couldn't be
+  //    resolved, fall back to the address text.
+  const geo = compareDeparture(
+    tripPlace,
+    placeFromColumns(req.originState, req.originLga, req.originCity),
+  );
+  const sameDeparture = geo ?? locationInDistrict(tripOrigin, req.origin);
+  if (!sameDeparture) return null;
 
   // 2a. Same arrival district.
   if (locationInDistrict(tripArrival, req.destination)) return 'exact';

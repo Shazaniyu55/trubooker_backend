@@ -18,6 +18,8 @@ import { CACHE_KEYS, CACHE_TTL } from '@modules/cache/redis-cache.constants';
 import { ExpoService } from '@modules/notification/services/expo.service';
 import { TripMatchingService } from '@modules/trip-matching/service/trip-matching.service';
 import { DeleteUserDto } from '../dtos/deleteuser.dto';
+import { GeocodingService } from '@modules/geocoding/geocoding.service';
+import { ResolvedPlace } from '@shared/utils/geo/place.util';
  
 const PLATFORM_FEE_RATE = parseFloat(process.env.PLATFORM_FEE_RATE ?? '7'); // 5%
  
@@ -49,7 +51,8 @@ export class DriverTripService {
     private readonly driverRepository: DriverRepository,
     private readonly cache: RedisCacheService,
     private readonly expoService: ExpoService,
-    private readonly matching: TripMatchingService,     
+    private readonly matching: TripMatchingService,
+        private readonly geocoding: GeocodingService,     
     
     
  
@@ -58,6 +61,22 @@ export class DriverTripService {
     
   ) {}
  
+    private async resolveDeparture(input: {
+    latlong?: any;
+    location?: string | null;
+    pickStation?: string | null;
+  }): Promise<ResolvedPlace | null> {
+    try {
+      return await this.geocoding.resolvePlace({
+        latlong: input.latlong,
+        address: input.location,
+        fallbackAddresses: [input.pickStation],
+      });
+    } catch (err) {
+      this.logger.warn(`Could not resolve departure place: ${err?.message}`);
+      return null;
+    }
+  }
   /**
    * Create a new trip
    */
@@ -112,6 +131,12 @@ if (dto.totalSeats > vehicle.capacity) {
  
     // Validate trip data
     this.validateTripData(dto);
+    // Where does this trip really depart from? (state / district / city)
+    const departurePlace = await this.resolveDeparture({
+      latlong: dto.departureLatlong,
+      location: dto.departureLocation,
+      pickStation: dto.pickStation,
+    });
  
       // Generate unique reference
     const reference = this.randomnessUtil.generateReference('TRP');
@@ -125,6 +150,9 @@ if (dto.totalSeats > vehicle.capacity) {
   departureTime: dto.departureTime,
   departureLocation: dto.departureLocation,
   departureLatlong: dto.departureLatlong,
+  departureState: departurePlace?.state ?? null,
+  departureLga: departurePlace?.lga ?? null,
+  departureCity: departurePlace?.city ?? null,
   arrivalDate: dto.arrivalDate,
   arrivalTime: dto.arrivalTime,
   arrivalDestination: dto.arrivalDestination,
@@ -175,15 +203,17 @@ try {
             {
               tripId: savedTrip.id,
               origin: dto.departureLocation,
+              
               // place name + address, so the district can be worked out even
               // when the driver only typed a terminal name
               destination:
                 [arrival?.name, arrival?.address].filter(Boolean).join(', ') ||
-                dto.dropOffStation,
+                dto.dropOffStation, 
               // arrival STATE — lets an inter-state passenger be notified for
               // a different district in the same state (Agbor → Ikorodu when
               // they asked for Agbor → Ikeja)
               destinationState: arrival?.state,
+              originPlace: departurePlace,
               date: dto.departureDate,
               departureTime: dto.departureTime,
             },
@@ -354,9 +384,56 @@ try {
       trip.availableSeats = nextTotalSeats - booked;
     }
 
+    // const updated = await manager.save(Trip, trip);
+
+    // this.logger.log(`Trip ${tripId} updated by driver ${userId}`);
+    // return updated;
+        // ── Departure changed? Work out the new district before saving ─────────
+    const departureEdited = !!(
+      dto.departureLocation ?? dto.origin ?? dto.departureLatlong ?? dto.pickStation
+    );
+    const before = `${trip.departureState}|${trip.departureLga}|${trip.departureCity}`;
+    let departurePlace: ResolvedPlace | null = null;
+    if (departureEdited) {
+      departurePlace = await this.resolveDeparture({
+        latlong: trip.departureLatlong,
+        location: trip.departureLocation,
+        pickStation: trip.pickStation,
+      });
+      trip.departureState = departurePlace?.state ?? null;
+      trip.departureLga = departurePlace?.lga ?? null;
+      trip.departureCity = departurePlace?.city ?? null;
+    }
+
     const updated = await manager.save(Trip, trip);
 
     this.logger.log(`Trip ${tripId} updated by driver ${userId}`);
+
+    // The trip now leaves from a different district → passengers waiting there
+    // may match it now. (Only when the district actually changed.)
+    const after = `${updated.departureState}|${updated.departureLga}|${updated.departureCity}`;
+    if (departureEdited && after !== before) {
+      try {
+        const arrival = updated.arrivalDestination?.[0];
+        await this.matching.fulfillRequestsForTrip(
+          {
+            tripId: updated.id,
+            origin: updated.departureLocation,
+            destination:
+              [arrival?.name, arrival?.address].filter(Boolean).join(', ') ||
+              updated.dropOffStation,
+            destinationState: arrival?.state ?? updated.state,
+            originPlace: departurePlace,
+            date: updated.departureDate,
+            departureTime: updated.departureTime,
+          },
+          manager,
+        );
+      } catch (err) {
+        this.logger.warn(`Re-matching after departure edit failed: ${err?.message}`);
+      }
+    }
+
     return updated;
   }
  

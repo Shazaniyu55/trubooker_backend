@@ -26,8 +26,8 @@ import {
 } from '../dtos/trip.dto';
 import { TripRepository } from '@adapters/repositories/trip.repository';
 import { TripMatchingService } from '@modules/trip-matching/service/trip-matching.service';
-// import { TicketStatus } from 'src/types/enums';
-
+import { GeocodingService } from '@modules/geocoding/geocoding.service';
+import { ResolvedPlace } from '@shared/utils/geo/place.util';
 
 
 @Injectable()
@@ -36,7 +36,8 @@ private readonly logger = new Logger(TripsService.name);
   constructor(
     private readonly tripRepository: TripRepository,
     private readonly fareService: FareService,
-      private readonly matching: TripMatchingService,
+    private readonly matching: TripMatchingService,
+    private readonly geocoding: GeocodingService,
 
   ) {}
 
@@ -66,6 +67,21 @@ async createTrip(
   };
 
   const trip = await this.tripRepository.createTrip(id, dtoWithPriceMeta, entityManager);
+    let departurePlace: ResolvedPlace | null = null;
+  try {
+    departurePlace = await this.geocoding.resolvePlace({ address: dto.origin });
+    if (departurePlace) {
+      const cols = {
+        departureState: departurePlace.state,
+        departureLga: departurePlace.lga,
+        departureCity: departurePlace.city,
+      };
+      await (entityManager ?? this.tripRepository.manager).update(Trip, { id: trip.id }, cols);
+      Object.assign(trip, cols);
+    }
+  } catch (err) {
+    this.logger.warn?.(`Could not store departure place: ${err?.message}`);
+  }
 
 if (entityManager) {
   try {
@@ -83,6 +99,7 @@ if (entityManager) {
         tripId: trip.id,
         origin: dto.origin,
         destination: dto.destination,
+        originPlace: departurePlace,
         date: dto.departureDate,
         departureTime: dto.departureTime,
       },
@@ -129,8 +146,12 @@ async activateTrip(userId: string, tripId: string): Promise<Trip> {
 
     async searchTripsWithAlternatives(query: SearchTripsDto) {
     // Exact search: SAME departure district, SAME arrival district.
-    const result: any = await this.tripRepository.searchTrips(query);
+    const originPlace = await this.searchOriginPlace(query.origin);
+
+        const result: any = await this.tripRepository.searchTrips(query, { originPlace });
+    //const result: any = await this.tripRepository.searchTrips(query);
     const exactCount = result?.meta?.totalRecords ?? 0;
+    
 
     if (exactCount === 0) {
       // Same route on another day (next 7 days) — only when a date was asked for.
@@ -181,52 +202,23 @@ async activateTrip(userId: string, tripId: string): Promise<Trip> {
     };
   }
   
-  // async searchTripsWithAlternatives(query: SearchTripsDto) {
-  //   const result: any = await this.tripRepository.searchTrips(query);
-  //   const exactCount = result?.meta?.totalRecords ?? 0;
- 
-  //   // Only hunt for alternatives when the caller asked for a SPECIFIC date and
-  //   // nothing matched it. An undated search already returns the full list.
-  //   if (query.date && exactCount === 0) {
-  //     const alternatives = await this.tripRepository.findAlternativeTrips({
-  //       origin: query.origin,
-  //       destination: query.destination,
-  //       date: query.date,
-  //       seats: query.seats,
-  //       windowDays: 7,          // look up to a week ahead
-  //       limit: query.limit ?? 10,
-  //     });
 
-  //     // When the passenger has a route but no matching trip, show what a fair
-  //     // fare would look like for 1–4 seats. This lets them decide whether to
-  //     // request a trip knowing roughly what they'll spend per seat.
-  //     const estimatedFares = await this.buildFareEstimate(query.origin, query.destination);
-
-  //     return {
-  //       ...result,
-  //       exactDateAvailable: false,
-  //       alternatives,
-  //       estimatedFares,
-  //       // No exact match AND no nearby trips → tell the app to show the
-  //       // "Request a trip / get notified" button.
-  //       canRequestTrip: alternatives.length === 0,
-  //     };
-  //   }
- 
-  //   return {
-  //     ...result,
-  //     exactDateAvailable: true,
-  //     alternatives: [],
-  //     estimatedFares: null,
-  //     canRequestTrip: false,
-  //   };
-  // }
 
   /** Best-effort per-seat fare estimate (1–4 seats). Never blocks a search. */
   private async buildFareEstimate(origin?: string, destination?: string) {
     if (!origin || !destination) return null;
     try {
       return await this.fareService.estimateForPassengers(origin, destination, 4);
+    } catch {
+      return null;
+    }
+  }
+
+
+    private async searchOriginPlace(origin?: string): Promise<ResolvedPlace | null> {
+    if (!origin?.trim()) return null;
+    try {
+      return await this.geocoding.resolvePlace({ address: origin });
     } catch {
       return null;
     }
@@ -252,8 +244,12 @@ async activateTrip(userId: string, tripId: string): Promise<Trip> {
 
   // ─── Passenger: Search trips ──────────────────────────────────────────────
 
-  async searchTrips(query: SearchTripsDto) {
-    return await this.tripRepository.searchTrips(query);
+  // async searchTrips(query: SearchTripsDto) {
+  //   return await this.tripRepository.searchTrips(query);
+  // }
+    async searchTrips(query: SearchTripsDto) {
+    const originPlace = await this.searchOriginPlace(query.origin);
+    return await this.tripRepository.searchTrips(query, { originPlace });
   }
 
   async searchTripState(query: SearchTripsDto){

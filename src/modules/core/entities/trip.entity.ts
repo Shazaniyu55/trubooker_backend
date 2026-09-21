@@ -105,7 +105,21 @@ bookedSeats: number;
     @Column({ type: 'jsonb', nullable: true })
   departureLatlong: any[];
 
-    @Column({ type: 'jsonb', nullable: true })
+    /** Canonical state name, e.g. "Delta". */
+  @Column({ type: 'varchar', nullable: true })
+  departureState: string | null;
+
+  /** LGA ("district"), normalised, e.g. "ika south". */
+  @Index('IDX_trips_departureLga')
+  @Column({ type: 'varchar', nullable: true })
+  departureLga: string | null;
+
+  /** City / town, normalised, e.g. "agbor". */
+  @Index('IDX_trips_departureCity')
+  @Column({ type: 'varchar', nullable: true })
+  departureCity: string | null;
+
+  @Column({ type: 'jsonb', nullable: true })
   busstopLatlong: any[];
 
     @Column({ type: 'varchar', nullable: true })

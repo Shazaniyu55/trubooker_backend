@@ -1,6 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { RedisCacheService } from '@modules/cache/redis-cache.service';
+import {
+  ResolvedPlace,
+  extractLatLng,
+  hasDistrictInfo,
+  placeFromGoogleResults,
+} from '@shared/utils/geo/place.util';
 
 export interface GeoPoint {
   lat: number;
@@ -198,6 +204,84 @@ async getDrivingDistance(
 }
 
 
+  async resolvePlace(input: {
+    address?: string | null;
+    latlong?: any;
+    fallbackAddresses?: (string | null | undefined)[];
+  }): Promise<ResolvedPlace | null> {
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      this.logger.warn('GOOGLE_MAPS_API_KEY not set — skipping place resolution');
+      return null;
+    }
+
+    let best: ResolvedPlace | null = null;
+    const consider = (p: ResolvedPlace | null): boolean => {
+      if (!p) return false;
+      if (!best || (hasDistrictInfo(p) && !hasDistrictInfo(best))) best = p;
+      return hasDistrictInfo(p);
+    };
+
+    const coords = extractLatLng(input.latlong);
+    if (coords && consider(await this.placeFromCoords(coords.lat, coords.lng, apiKey))) {
+      return best;
+    }
+
+    const addresses = [input.address, ...(input.fallbackAddresses ?? [])]
+      .map((a) => a?.trim())
+      .filter((a): a is string => !!a);
+    for (const address of addresses) {
+      if (consider(await this.placeFromAddress(address, apiKey))) return best;
+    }
+    return best;
+  }
+
+  private async placeFromCoords(lat: number, lng: number, apiKey: string): Promise<ResolvedPlace | null> {
+    const cacheKey = `place:v1:ll:${lat.toFixed(4)},${lng.toFixed(4)}`;
+    try {
+      const cached = await this.cache.get<ResolvedPlace>(cacheKey);
+      if (cached) return cached;
+
+      const { data } = await axios.get(GEOCODE_URL, {
+        params: { latlng: `${lat},${lng}`, region: 'ng', language: 'en', key: apiKey },
+        timeout: 6_000,
+      });
+      if (data.status !== 'OK') {
+        this.logger.warn(`Reverse geocode failed for ${lat},${lng}: ${data.status}`);
+        return null;
+      }
+      const place = placeFromGoogleResults(data.results, true);
+      if (place) await this.cache.set(cacheKey, place, CACHE_TTL_SECONDS);
+      return place;
+    } catch (err) {
+      this.logger.error(`Reverse geocode error for ${lat},${lng}: ${err.message}`);
+      return null;
+    }
+  }
+
+  private async placeFromAddress(address: string, apiKey: string): Promise<ResolvedPlace | null> {
+    const cacheKey = `place:v1:addr:${address.toLowerCase()}`;
+    try {
+      const cached = await this.cache.get<ResolvedPlace>(cacheKey);
+      if (cached) return cached;
+
+      const { data } = await axios.get(GEOCODE_URL, {
+        // components restricts the search to Nigeria so "Agbor" can't resolve abroad
+        params: { address, components: 'country:NG', region: 'ng', language: 'en', key: apiKey },
+        timeout: 6_000,
+      });
+      if (data.status !== 'OK' || !data.results?.length) {
+        this.logger.warn(`Place lookup failed for "${address}": ${data.status}`);
+        return null;
+      }
+      const place = placeFromGoogleResults(data.results, false);
+      if (place) await this.cache.set(cacheKey, place, CACHE_TTL_SECONDS);
+      return place;
+    } catch (err) {
+      this.logger.error(`Place lookup error for "${address}": ${err.message}`);
+      return null;
+    }
+  }
 }
 
 function round(v: number, dp = 0): number {
